@@ -5,6 +5,16 @@ import bcrypt from "bcrypt";
 import { pool } from "./db";
 import { newTokenUser } from "./tokens";
 
+// --- REQUIRE ADMIN (pegar en server.ts) ---
+const ADMIN_SECRET = process.env.ADMIN_SECRET || "";
+
+function requireAdmin(req: any, res: any, next: any) {
+  const header = (req.headers["x-admin-secret"] || req.query.adminSecret || "").toString();
+  if (!ADMIN_SECRET || header !== ADMIN_SECRET) {
+    return res.status(401).json({ error: "admin_required" });
+  }
+  next();
+}
 
 const app = express();
 app.use(cors());
@@ -257,7 +267,30 @@ app.post("/wallet/me", async (req, res) => {
   res.json({ coins: w.rows[0]?.coins ?? 0 });
 });
 
+// --- RUTA /wallet/topup PROTEGIDA (reemplaza la existente) ---
+app.post("/wallet/topup", requireAdmin, async (req, res) => {
+  const { tokenUser, amount } = req.body || {};
+  const inc = Number(amount || 0);
+  if (!tokenUser || !Number.isInteger(inc) || inc <= 0) {
+    return res.status(400).json({ error: "tokenUser/amount required" });
+  }
+  try {
+    const userId = await getUserIdByToken(tokenUser);
+    if (!userId) return res.status(404).json({ error: "invalid tokenUser" });
+
+    const cur = await getCoins(userId);
+    const newBal = cur + inc;
+    await setCoins(userId, newBal);
+    await addWalletTx(userId, inc, "ADMIN_TOPUP");
+
+    return res.json({ ok: true, coins: newBal });
+  } catch (e:any) {
+    console.error("ADMIN TOPUP ERROR:", e);
+    return res.status(500).json({ error: "server error" });
+  }
+});
 // /wallet/topup (para pruebas)
+/*
 app.post("/wallet/topup", async (req, res) => {
   const { tokenUser, amount } = req.body || {};
   const inc = Number(amount || 0);
@@ -274,6 +307,6 @@ app.post("/wallet/topup", async (req, res) => {
 
   return res.json({ coins: newBal });
 });
-
+*/
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => console.log(`API lista en http://localhost:${PORT}`));
