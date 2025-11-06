@@ -10,24 +10,24 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// ─── Arranque y rutas de verificación ─────────────────────────────────────────
 app.get("/", (_req, res) => res.send("OK ROOT ✅"));
-app.get("/health", (_req, res) => res.json({ status: "OK DEPLOY ✅" }));
-app.get("/version", (_req, res) => res.json({ commit: process.env.RENDER_GIT_COMMIT || "local" }));
-console.log("BOOT MARKER: server code includes /health + /version"); // log visible en Render
-
-app.get("/health", (_req, res) => {
-  res.json({ status: "OK DEPLOY ✅" });
-});
 
 app.get("/health", async (_req, res) => {
   try {
     const r = await pool.query("SELECT 1");
-    res.json({ ok: true, db: r.rows[0] });
-  } catch (e:any) {
+    res.json({ status: "OK DEPLOY ✅", db: r.rows[0] });
+  } catch (e: any) {
     console.error("HEALTH DB ERROR:", e);
     res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
 });
+
+app.get("/version", (_req, res) => {
+  res.json({ commit: process.env.RENDER_GIT_COMMIT || "local" });
+});
+console.log("BOOT MARKER: server code includes /health + /version");
+
 
 
 // Precio por unidad (ajústalo a tu gusto)
@@ -131,7 +131,7 @@ app.post("/link/complete", async (req, res) => {
   // );
 
   res.json({ tokenUser, playerName: data.name });
-});
+})
 ;
 
 // 3) Lo llama la APP: crea una “orden de compra” (dar ítem)
@@ -197,9 +197,6 @@ app.post("/tasks/ack", (req, res) => {
   res.json({ ok: true });
 });
 
-const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => console.log(`API lista en http://localhost:${PORT}`));
-
 // REGISTER
 app.post("/auth/register", async (req, res) => {
   const { username, password } = req.body || {};
@@ -215,9 +212,11 @@ app.post("/auth/register", async (req, res) => {
     const tokenUser = await ensureTokenForUser(u.rows[0].id);
     res.json({ tokenUser, playerName: u.rows[0].username, coins: 0 });
   } catch (e: any) {
-    if (e.code === "23505") return res.status(409).json({ error: "username already exists" });
-    res.status(500).json({ error: "server error" });
-  }
+  console.error("REGISTER ERROR:", e); // <— agrega esto
+  if (e.code === "23505") return res.status(409).json({ error: "username already exists" });
+  res.status(500).json({ error: "server error" });
+}
+
 });
 
 // LOGIN
@@ -265,3 +264,6 @@ app.post("/wallet/topup", async (req, res) => {
 
   return res.json({ coins: newBal });
 });
+
+const PORT = process.env.PORT || 3001;
+app.listen(PORT, () => console.log(`API lista en http://localhost:${PORT}`));
