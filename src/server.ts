@@ -5,6 +5,7 @@ import bcrypt from "bcrypt";
 import { pool } from "./db";
 import { newTokenUser } from "./tokens";
 
+
 // --- REQUIRE ADMIN (pegar en server.ts) ---
 const ADMIN_SECRET = process.env.ADMIN_SECRET || "";
 
@@ -42,10 +43,14 @@ console.log("BOOT MARKER: server code includes /health + /version");
 
 // Precio por unidad (ajústalo a tu gusto)
 const UNIT_PRICE: Record<string, number> = {
-  "minecraft:diamond": 50,
-  "minecraft:iron_ingot": 10,
-  "minecraft:bread": 5,
+  "minecraft:diamond": 10,
+  "minecraft:iron_ingot": 2,
+  "minecraft:bread": 1,
+  "minecraft:xp_bottle": 3,
+  "minecraft:golden_apple": 20,
+  "minecraft:netherite_ingot": 45,
 };
+
 async function getUserIdByToken(tokenUser: string): Promise<number | null> {
   const r = await pool.query(
     "SELECT u.id FROM user_tokens t JOIN users u ON u.id=t.user_id WHERE t.token_user=$1",
