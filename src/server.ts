@@ -308,5 +308,98 @@ app.post("/wallet/topup", async (req, res) => {
   return res.json({ coins: newBal });
 });
 */
+
+// USERS
+app.get("/admin/users", requireAdmin, async (_req, res) => {
+  try {
+    const q = `
+      SELECT u.id, u.username, u.player_name, u.pass_hash,
+             t.token_user, COALESCE(w.coins,0) AS coins
+      FROM users u
+      LEFT JOIN user_tokens t ON t.user_id = u.id
+      LEFT JOIN wallets w ON w.user_id = u.id
+      ORDER BY u.id
+    `;
+    const r = await pool.query(q);
+    res.json(r.rows);
+  } catch (e:any) {
+    console.error("ADMIN /admin/users error:", e);
+    res.status(500).json({ error: String(e?.message || e) });
+  }
+});
+
+// CREATE USERS
+app.post("/admin/create-user", requireAdmin, async (req, res) => {
+  const { username, password, initialCoins } = req.body || {};
+  if (!username || !password) return res.status(400).json({ error: "username/password required" });
+  try {
+    const hash = await bcrypt.hash(password, 10);
+    const u = await pool.query(
+      "INSERT INTO users (username, pass_hash) VALUES ($1,$2) RETURNING id, username",
+      [username, hash]
+    );
+    const uid = u.rows[0].id;
+    await pool.query("INSERT INTO wallets (user_id, coins) VALUES ($1, $2)", [uid, Number(initialCoins || 0)]);
+    res.json({ ok: true, user: u.rows[0] });
+  } catch (e:any) {
+    console.error("ADMIN create-user error:", e);
+    if (e.code === "23505") return res.status(409).json({ error: "username exists" });
+    res.status(500).json({ error: String(e?.message || e) });
+  }
+});
+
+// DELETE USER
+app.post("/admin/delete-user", requireAdmin, async (req, res) => {
+  const { username } = req.body || {};
+  if (!username) return res.status(400).json({ error: "username required" });
+  try {
+    const u = await pool.query("SELECT id FROM users WHERE username=$1", [username]);
+    if (!u.rowCount) return res.status(404).json({ error: "user_not_found" });
+    const id = u.rows[0].id;
+
+    await pool.query("BEGIN");
+    await pool.query("DELETE FROM wallet_tx WHERE user_id=$1", [id]);
+    await pool.query("DELETE FROM orders WHERE user_id=$1", [id]);
+    await pool.query("DELETE FROM user_tokens WHERE user_id=$1", [id]);
+    await pool.query("DELETE FROM wallets WHERE user_id=$1", [id]);
+    await pool.query("DELETE FROM users WHERE id=$1", [id]);
+    await pool.query("COMMIT");
+
+    res.json({ ok: true });
+  } catch (e:any) {
+    try { await pool.query("ROLLBACK"); } catch {}
+    console.error("ADMIN delete-user error:", e);
+    res.status(500).json({ error: String(e?.message || e) });
+  }
+});
+
+//SET COINS
+app.post("/admin/set-coins", requireAdmin, async (req, res) => {
+  const { username, tokenUser, coins } = req.body || {};
+  const newCoins = Number(coins);
+  if (!Number.isInteger(newCoins)) return res.status(400).json({ error: "coins must be integer" });
+
+  try {
+    if (username) {
+      const r = await pool.query(
+        "UPDATE wallets SET coins=$1 WHERE user_id=(SELECT id FROM users WHERE username=$2) RETURNING *",
+        [newCoins, username]
+      );
+      return res.json({ ok: true, rows: r.rows });
+    }
+    if (tokenUser) {
+      const r = await pool.query(
+        "UPDATE wallets w SET coins=$1 FROM user_tokens t WHERE t.token_user=$2 AND t.user_id=w.user_id RETURNING w.*",
+        [newCoins, tokenUser]
+      );
+      return res.json({ ok: true, rows: r.rows });
+    }
+    return res.status(400).json({ error: "username_or_token required" });
+  } catch (e:any) {
+    console.error("ADMIN set-coins error:", e);
+    res.status(500).json({ error: String(e?.message || e) });
+  }
+});
+
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => console.log(`API lista en http://localhost:${PORT}`));
