@@ -10,6 +10,25 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+app.get("/", (_req, res) => res.send("OK ROOT ✅"));
+app.get("/health", (_req, res) => res.json({ status: "OK DEPLOY ✅" }));
+app.get("/version", (_req, res) => res.json({ commit: process.env.RENDER_GIT_COMMIT || "local" }));
+console.log("BOOT MARKER: server code includes /health + /version"); // log visible en Render
+
+app.get("/health", (_req, res) => {
+  res.json({ status: "OK DEPLOY ✅" });
+});
+
+app.get("/health", async (_req, res) => {
+  try {
+    const r = await pool.query("SELECT 1");
+    res.json({ ok: true, db: r.rows[0] });
+  } catch (e:any) {
+    console.error("HEALTH DB ERROR:", e);
+    res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
 
 // Precio por unidad (ajústalo a tu gusto)
 const UNIT_PRICE: Record<string, number> = {
