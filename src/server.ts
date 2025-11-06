@@ -112,26 +112,36 @@ app.post("/link/start", (req, res) => {
 
 // 2) Lo llama la APP: completa vinculación con el código
 app.post("/link/complete", async (req, res) => {
-  const { code } = req.body || {};
+  const { code, tokenUser } = req.body || {};
+  if (!code || !tokenUser) return res.status(400).json({ error: "code/tokenUser required" });
+
   const data = links.get(code);
-  if (!data || Date.now() > data.exp) return res.status(400).json({ error: "invalid_or_expired_code" });
+  if (!data || Date.now() > data.exp) {
+    return res.status(400).json({ error: "invalid_or_expired_code" });
+  }
 
-  // crea/encuentra usuario por name (playerName)
-  const user = await findOrCreateUserByName(data.name);
-  const tokenUser = await ensureTokenForUser(user.id);
+  // validar tokenUser → obtener userId del usuario LOGUEADO
+  const userId = await userIdFromToken(tokenUser);
+  if (!userId) return res.status(401).json({ error: "invalid tokenUser" });
 
-  // (tu lógica en memoria)
+  // vincular ese token con el uuid de MC
   bindings.set(tokenUser, data.uuid);
   links.delete(code);
 
-  // opcional: persistir el code como histórico (no requerido para que funcione)
-  // await pool.query(
-  //   "INSERT INTO link_codes (code, mc_uuid, expires_at, used, user_id) VALUES ($1,$2, NOW(), true, $3) ON CONFLICT (code) DO NOTHING",
-  //   [code, data.uuid, user.id]
-  // );
+  // opcional: guarda el nombre del jugador para mostrar en la app
+  await pool.query("UPDATE users SET player_name = $1 WHERE id = $2", [data.name, userId]).catch(()=>{});
 
-  res.json({ tokenUser, playerName: data.name });
-})
+  // devolver el mismo token y el nombre actual (cuenta) y opcionalmente el playerName de MC
+  const w = await pool.query("SELECT coins FROM wallets WHERE user_id=$1", [userId]);
+  res.json({
+    ok: true,
+    tokenUser,                 // el mismo token del usuario logueado (123)
+    accountName: (await pool.query("SELECT username FROM users WHERE id=$1",[userId])).rows[0]?.username,
+    minecraftName: data.name,  // p.ej. TheFranckMC
+    coins: w.rows[0]?.coins ?? 0,
+  });
+});
+
 ;
 
 // 3) Lo llama la APP: crea una “orden de compra” (dar ítem)
