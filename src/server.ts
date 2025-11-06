@@ -50,7 +50,7 @@ const UNIT_PRICE: Record<string, number> = {
   "minecraft:golden_apple": 20,
   "minecraft:netherite_ingot": 45,
 };
-
+  
 async function getUserIdByToken(tokenUser: string): Promise<number | null> {
   const r = await pool.query(
     "SELECT u.id FROM user_tokens t JOIN users u ON u.id=t.user_id WHERE t.token_user=$1",
@@ -168,7 +168,15 @@ app.post("/purchase", async (req, res) => {
   if (!bindings.has(tokenUser)) return res.status(401).json({ error: "account_not_linked" });
 
   // validar item y qty
-  const okItems = new Set(["minecraft:diamond", "minecraft:bread", "minecraft:iron_ingot"]);
+  const okItems = new Set([
+  "minecraft:diamond",
+  "minecraft:bread",
+  "minecraft:iron_ingot",
+  "minecraft:experience_bottle",
+  "minecraft:golden_apple",
+  "minecraft:netherite_ingot",
+]);
+
   if (!okItems.has(String(itemId))) return res.status(400).json({ error: "invalid_item" });
 
   const qty = Number(amount || 0);
