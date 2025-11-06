@@ -46,7 +46,7 @@ const UNIT_PRICE: Record<string, number> = {
   "minecraft:diamond": 10,
   "minecraft:iron_ingot": 2,
   "minecraft:bread": 1,
-  "minecraft:xp_bottle": 3,
+  "minecraft:experience_bottle": 3,
   "minecraft:golden_apple": 20,
   "minecraft:netherite_ingot": 45,
 };
