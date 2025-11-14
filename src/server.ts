@@ -43,12 +43,25 @@ console.log("BOOT MARKER: server code includes /health + /version");
 
 // Precio por unidad (ajústalo a tu gusto)
 const UNIT_PRICE: Record<string, number> = {
+"minecraft:bread": 1,
+"minecraft:experience_bottle": 3,
+"minecraft:apple": 1,
+"minecraft:cooked_beef": 4,
+"minecraft:cooked_porkchop": 4,
+"minecraft:cooked_mutton": 3,
+"minecraft:cooked_chicken": 3,
+"minecraft:cooked_cod": 3,
+"minecraft:cooked_salmon": 4,
+"minecraft:golden_carrot": 6,
+
+
   "minecraft:diamond": 10,
   "minecraft:iron_ingot": 2,
-  "minecraft:bread": 1,
-  "minecraft:experience_bottle": 3,
+  
+  
   "minecraft:golden_apple": 20,
   "minecraft:netherite_ingot": 45,
+  
 };
   
 async function getUserIdByToken(tokenUser: string): Promise<number | null> {
@@ -169,10 +182,19 @@ app.post("/purchase", async (req, res) => {
 
   // validar item y qty
   const okItems = new Set([
+    "minecraft:bread",
+    "minecraft:experience_bottle",
+    "minecraft:apple",
+    "minecraft:cooked_beef",
+    "minecraft:cooked_porkchop",
+    "minecraft:cooked_mutton",
+    "minecraft:cooked_chicken",
+    "minecraft:cooked_cod",
+    "minecraft:cooked_salmon",
+    "minecraft:golden_carrot",
+    
   "minecraft:diamond",
-  "minecraft:bread",
   "minecraft:iron_ingot",
-  "minecraft:experience_bottle",
   "minecraft:golden_apple",
   "minecraft:netherite_ingot",
 ]);
