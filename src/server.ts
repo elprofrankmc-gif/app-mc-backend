@@ -712,11 +712,13 @@ app.post("/admin/set-coins", requireAdmin, async (req, res) => {
 
 //RESETEAR FILA
 app.post("/admin/reward-reset-full", requireAdmin, async (req, res) => {
-  const { userId } = req.body || {};
-  if (!userId) return res.status(400).json({ error: "userId required" });
+  const { username } = req.body || {};
+if (!username) return res.status(400).json({ error: "username required" });
 
   try {
-    await pool.query("DELETE FROM daily_rewards WHERE user_id=$1", [userId]);
+    await pool.query(
+  "DELETE FROM daily_rewards WHERE user_id = (SELECT id FROM users WHERE username=$1)",
+  [username]);
     return res.json({ ok: true });
   } catch (e: any) {
     console.error("RESET FULL ERROR:", e);
@@ -726,14 +728,13 @@ app.post("/admin/reward-reset-full", requireAdmin, async (req, res) => {
 
 //RESETEAR LA FECHA
 app.post("/admin/reward-reset-date", requireAdmin, async (req, res) => {
-  const { userId } = req.body || {};
-  if (!userId) return res.status(400).json({ error: "userId required" });
+  const { username } = req.body || {};
+if (!username) return res.status(400).json({ error: "username required" });
 
   try {
     await pool.query(
-      "UPDATE daily_rewards SET last_claim_date=NULL WHERE user_id=$1",
-      [userId]
-    );
+  "DELETE FROM daily_rewards WHERE user_id = (SELECT id FROM users WHERE username=$1)",
+  [username]);
     return res.json({ ok: true });
   } catch (e: any) {
     console.error("RESET DATE ERROR:", e);
@@ -743,14 +744,13 @@ app.post("/admin/reward-reset-date", requireAdmin, async (req, res) => {
 
 //RESETEAR RACHA
 app.post("/admin/reward-reset-streak", requireAdmin, async (req, res) => {
-  const { userId } = req.body || {};
-  if (!userId) return res.status(400).json({ error: "userId required" });
+  const { username } = req.body || {};
+if (!username) return res.status(400).json({ error: "username required" });
 
   try {
     await pool.query(
-      "UPDATE daily_rewards SET streak=0 WHERE user_id=$1",
-      [userId]
-    );
+  "DELETE FROM daily_rewards WHERE user_id = (SELECT id FROM users WHERE username=$1)",
+  [username]);
     return res.json({ ok: true });
   } catch (e: any) {
     console.error("RESET STREAK ERROR:", e);
