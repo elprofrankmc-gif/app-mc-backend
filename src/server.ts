@@ -5,12 +5,15 @@ import bcrypt from "bcrypt";
 import { pool } from "./db";
 import { newTokenUser } from "./tokens";
 
-
 // --- REQUIRE ADMIN (pegar en server.ts) ---
 const ADMIN_SECRET = process.env.ADMIN_SECRET || "";
 
 function requireAdmin(req: any, res: any, next: any) {
-  const header = (req.headers["x-admin-secret"] || req.query.adminSecret || "").toString();
+  const header = (
+    req.headers["x-admin-secret"] ||
+    req.query.adminSecret ||
+    ""
+  ).toString();
   if (!ADMIN_SECRET || header !== ADMIN_SECRET) {
     return res.status(401).json({ error: "admin_required" });
   }
@@ -39,31 +42,26 @@ app.get("/version", (_req, res) => {
 });
 console.log("BOOT MARKER: server code includes /health + /version");
 
-
-
 // Precio por unidad (ajústalo a tu gusto)
 const UNIT_PRICE: Record<string, number> = {
-"minecraft:bread": 1,
-"minecraft:experience_bottle": 3,
-"minecraft:apple": 1,
-"minecraft:cooked_beef": 4,
-"minecraft:cooked_porkchop": 4,
-"minecraft:cooked_mutton": 3,
-"minecraft:cooked_chicken": 3,
-"minecraft:cooked_cod": 3,
-"minecraft:cooked_salmon": 4,
-"minecraft:golden_carrot": 6,
-
+  "minecraft:bread": 1,
+  "minecraft:experience_bottle": 3,
+  "minecraft:apple": 1,
+  "minecraft:cooked_beef": 4,
+  "minecraft:cooked_porkchop": 4,
+  "minecraft:cooked_mutton": 3,
+  "minecraft:cooked_chicken": 3,
+  "minecraft:cooked_cod": 3,
+  "minecraft:cooked_salmon": 4,
+  "minecraft:golden_carrot": 6,
 
   "minecraft:diamond": 10,
   "minecraft:iron_ingot": 2,
-  
-  
+
   "minecraft:golden_apple": 20,
   "minecraft:netherite_ingot": 45,
-  
 };
-  
+
 async function getUserIdByToken(tokenUser: string): Promise<number | null> {
   const r = await pool.query(
     "SELECT u.id FROM user_tokens t JOIN users u ON u.id=t.user_id WHERE t.token_user=$1",
@@ -73,24 +71,32 @@ async function getUserIdByToken(tokenUser: string): Promise<number | null> {
 }
 
 async function getCoins(userId: number): Promise<number> {
-  const r = await pool.query("SELECT coins FROM wallets WHERE user_id=$1", [userId]);
+  const r = await pool.query("SELECT coins FROM wallets WHERE user_id=$1", [
+    userId,
+  ]);
   return r.rows[0]?.coins ?? 0;
 }
 
 async function addWalletTx(userId: number, delta: number, reason: string) {
-  await pool.query("INSERT INTO wallet_tx (user_id, delta, reason) VALUES ($1,$2,$3)", [userId, delta, reason]);
+  await pool.query(
+    "INSERT INTO wallet_tx (user_id, delta, reason) VALUES ($1,$2,$3)",
+    [userId, delta, reason]
+  );
 }
 
 async function setCoins(userId: number, newCoins: number) {
-  await pool.query("UPDATE wallets SET coins=$1 WHERE user_id=$2", [newCoins, userId]);
+  await pool.query("UPDATE wallets SET coins=$1 WHERE user_id=$2", [
+    newCoins,
+    userId,
+  ]);
 }
 
-
-
 async function findOrCreateUserByName(username: string) {
-
   // intenta encontrar
-  const r = await pool.query("SELECT id, username FROM users WHERE username=$1", [username]);
+  const r = await pool.query(
+    "SELECT id, username FROM users WHERE username=$1",
+    [username]
+  );
   if (r.rowCount) return r.rows[0];
 
   // crea con pass_hash dummy (solo para link)
@@ -101,15 +107,23 @@ async function findOrCreateUserByName(username: string) {
   );
 
   // crea wallet 0
-  await pool.query("INSERT INTO wallets (user_id, coins) VALUES ($1, 0)", [ins.rows[0].id]);
+  await pool.query("INSERT INTO wallets (user_id, coins) VALUES ($1, 0)", [
+    ins.rows[0].id,
+  ]);
   return ins.rows[0];
 }
 
 async function ensureTokenForUser(userId: number) {
-  const r = await pool.query("SELECT token_user FROM user_tokens WHERE user_id=$1", [userId]);
+  const r = await pool.query(
+    "SELECT token_user FROM user_tokens WHERE user_id=$1",
+    [userId]
+  );
   if (r.rowCount) return r.rows[0].token_user;
   const token = newTokenUser();
-  await pool.query("INSERT INTO user_tokens (token_user, user_id) VALUES ($1,$2)", [token, userId]);
+  await pool.query(
+    "INSERT INTO user_tokens (token_user, user_id) VALUES ($1,$2)",
+    [token, userId]
+  );
   return token;
 }
 
@@ -121,12 +135,38 @@ async function userIdFromToken(tokenUser: string) {
   return u.rowCount ? (u.rows[0].id as number) : null;
 }
 
+// === Helpers para recompensas diarias ===
+
+// Calcula la recompensa según la racha (día 1..7, luego se mantiene)
+function getRewardForStreak(streak: number): number {
+  if (streak <= 1) return 5;
+  if (streak === 2) return 8;
+  if (streak === 3) return 12;
+  if (streak === 4) return 15;
+  if (streak === 5) return 20;
+  if (streak === 6) return 25;
+  return 30; // día 7 o más
+}
+
+// Diferencia en días entre dos fechas (YYYY-MM-DD)
+function diffDays(a: string, b: string): number {
+  const da = new Date(a + "T00:00:00Z");
+  const db = new Date(b + "T00:00:00Z");
+  return Math.floor((da.getTime() - db.getTime()) / (1000 * 60 * 60 * 24));
+}
+
 // === “BD” en memoria (demo) ===
 type LinkData = { uuid: string; name: string; exp: number };
-const links = new Map<string, LinkData>();            // code -> {uuid,name,exp}
-const bindings = new Map<string, string>();           // tokenUser -> uuid
-type Task = { id: string; playerUuid: string; itemId: string; amount: number; message: string };
-const tasks: Task[] = [];                              // cola de tareas
+const links = new Map<string, LinkData>(); // code -> {uuid,name,exp}
+const bindings = new Map<string, string>(); // tokenUser -> uuid
+type Task = {
+  id: string;
+  playerUuid: string;
+  itemId: string;
+  amount: number;
+  message: string;
+};
+const tasks: Task[] = []; // cola de tareas
 
 // 1) Lo llama el plugin: crea código de vinculación
 app.post("/link/start", (req, res) => {
@@ -134,14 +174,15 @@ app.post("/link/start", (req, res) => {
   if (!uuid || !name) return res.status(400).json({ error: "bad_request" });
 
   const code = Math.floor(100000 + Math.random() * 900000).toString(); // 6 dígitos
-  links.set(code, { uuid, name, exp: Date.now() + 5 * 60_000 });       // 5 min
+  links.set(code, { uuid, name, exp: Date.now() + 5 * 60_000 }); // 5 min
   res.json({ code });
 });
 
 // 2) Lo llama la APP: completa vinculación con el código
 app.post("/link/complete", async (req, res) => {
   const { code, tokenUser } = req.body || {};
-  if (!code || !tokenUser) return res.status(400).json({ error: "code/tokenUser required" });
+  if (!code || !tokenUser)
+    return res.status(400).json({ error: "code/tokenUser required" });
 
   const data = links.get(code);
   if (!data || Date.now() > data.exp) {
@@ -157,20 +198,24 @@ app.post("/link/complete", async (req, res) => {
   links.delete(code);
 
   // opcional: guarda el nombre del jugador para mostrar en la app
-  await pool.query("UPDATE users SET player_name = $1 WHERE id = $2", [data.name, userId]).catch(()=>{});
+  await pool
+    .query("UPDATE users SET player_name = $1 WHERE id = $2", [data.name, userId])
+    .catch(() => {});
 
   // devolver el mismo token y el nombre actual (cuenta) y opcionalmente el playerName de MC
-  const w = await pool.query("SELECT coins FROM wallets WHERE user_id=$1", [userId]);
+  const w = await pool.query("SELECT coins FROM wallets WHERE user_id=$1", [
+    userId,
+  ]);
   res.json({
     ok: true,
-    tokenUser,                 // el mismo token del usuario logueado (123)
-    accountName: (await pool.query("SELECT username FROM users WHERE id=$1",[userId])).rows[0]?.username,
-    minecraftName: data.name,  // p.ej. TheFranckMC
+    tokenUser, // el mismo token del usuario logueado (123)
+    accountName: (
+      await pool.query("SELECT username FROM users WHERE id=$1", [userId])
+    ).rows[0]?.username,
+    minecraftName: data.name, // p.ej. TheFranckMC
     coins: w.rows[0]?.coins ?? 0,
   });
 });
-
-;
 
 // 3) Lo llama la APP: crea una “orden de compra” (dar ítem)
 app.post("/purchase", async (req, res) => {
@@ -178,7 +223,8 @@ app.post("/purchase", async (req, res) => {
   if (!tokenUser) return res.status(401).json({ error: "unauthorized" });
 
   // validar vinculación (sigues usando tu mapa en memoria)
-  if (!bindings.has(tokenUser)) return res.status(401).json({ error: "account_not_linked" });
+  if (!bindings.has(tokenUser))
+    return res.status(401).json({ error: "account_not_linked" });
 
   // validar item y qty
   const okItems = new Set([
@@ -192,17 +238,19 @@ app.post("/purchase", async (req, res) => {
     "minecraft:cooked_cod",
     "minecraft:cooked_salmon",
     "minecraft:golden_carrot",
-    
-  "minecraft:diamond",
-  "minecraft:iron_ingot",
-  "minecraft:golden_apple",
-  "minecraft:netherite_ingot",
-]);
 
-  if (!okItems.has(String(itemId))) return res.status(400).json({ error: "invalid_item" });
+    "minecraft:diamond",
+    "minecraft:iron_ingot",
+    "minecraft:golden_apple",
+    "minecraft:netherite_ingot",
+  ]);
+
+  if (!okItems.has(String(itemId)))
+    return res.status(400).json({ error: "invalid_item" });
 
   const qty = Number(amount || 0);
-  if (!Number.isInteger(qty) || qty < 1 || qty > 64) return res.status(400).json({ error: "invalid_amount" });
+  if (!Number.isInteger(qty) || qty < 1 || qty > 64)
+    return res.status(400).json({ error: "invalid_amount" });
 
   // precio total
   const unit = UNIT_PRICE[itemId];
@@ -214,7 +262,10 @@ app.post("/purchase", async (req, res) => {
   if (!userId) return res.status(401).json({ error: "invalid_tokenUser" });
 
   const cur = await getCoins(userId);
-  if (cur < total) return res.status(400).json({ error: "not_enough_coins", need: total, have: cur });
+  if (cur < total)
+    return res
+      .status(400)
+      .json({ error: "not_enough_coins", need: total, have: cur });
 
   // descontar y auditar
   const newBal = cur - total;
@@ -229,11 +280,16 @@ app.post("/purchase", async (req, res) => {
   );
 
   const id = crypto.randomUUID();
-  tasks.push({ id, playerUuid, itemId, amount: qty, message: "Compra completada" });
+  tasks.push({
+    id,
+    playerUuid,
+    itemId,
+    amount: qty,
+    message: "Compra completada",
+  });
 
   return res.json({ ok: true, orderId: ins.rows[0].id, balance: newBal });
 });
-
 
 // 4) Lo llama el plugin: obtiene tareas pendientes
 app.get("/tasks/pull", (_req, res) => {
@@ -243,10 +299,11 @@ app.get("/tasks/pull", (_req, res) => {
 // 5) Lo llama el plugin: confirma tareas entregadas
 app.post("/tasks/ack", (req, res) => {
   const { ids } = req.body || {};
-  if (!Array.isArray(ids)) return res.status(400).json({ error: "ids_required" });
+  if (!Array.isArray(ids))
+    return res.status(400).json({ error: "ids_required" });
 
   for (const id of ids) {
-    const i = tasks.findIndex(t => t.id === id);
+    const i = tasks.findIndex((t) => t.id === id);
     if (i >= 0) tasks.splice(i, 1);
   }
   res.json({ ok: true });
@@ -255,7 +312,10 @@ app.post("/tasks/ack", (req, res) => {
 // REGISTER
 app.post("/auth/register", async (req, res) => {
   const { username, password } = req.body || {};
-  if (!username || !password) return res.status(400).json({ error: "username/password required" });
+  if (!username || !password)
+    return res
+      .status(400)
+      .json({ error: "username/password required" });
 
   try {
     const hash = await bcrypt.hash(password, 10);
@@ -263,43 +323,258 @@ app.post("/auth/register", async (req, res) => {
       "INSERT INTO users (username, pass_hash) VALUES ($1,$2) RETURNING id, username",
       [username, hash]
     );
-    await pool.query("INSERT INTO wallets (user_id, coins) VALUES ($1, 0)", [u.rows[0].id]);
+    await pool.query("INSERT INTO wallets (user_id, coins) VALUES ($1, 0)", [
+      u.rows[0].id,
+    ]);
     const tokenUser = await ensureTokenForUser(u.rows[0].id);
     res.json({ tokenUser, playerName: u.rows[0].username, coins: 0 });
   } catch (e: any) {
-  console.error("REGISTER ERROR:", e); // <— agrega esto
-  if (e.code === "23505") return res.status(409).json({ error: "username already exists" });
-  res.status(500).json({ error: "server error" });
-}
-
+    console.error("REGISTER ERROR:", e);
+    if (e.code === "23505")
+      return res.status(409).json({ error: "username already exists" });
+    res.status(500).json({ error: "server error" });
+  }
 });
 
 // LOGIN
 app.post("/auth/login", async (req, res) => {
   const { username, password } = req.body || {};
-  if (!username || !password) return res.status(400).json({ error: "username/password required" });
+  if (!username || !password)
+    return res
+      .status(400)
+      .json({ error: "username/password required" });
 
-  const r = await pool.query("SELECT id, username, pass_hash FROM users WHERE username=$1", [username]);
-  if (!r.rowCount) return res.status(401).json({ error: "invalid credentials" });
+  const r = await pool.query(
+    "SELECT id, username, pass_hash FROM users WHERE username=$1",
+    [username]
+  );
+  if (!r.rowCount)
+    return res.status(401).json({ error: "invalid credentials" });
 
   const ok = await bcrypt.compare(password, r.rows[0].pass_hash);
   if (!ok) return res.status(401).json({ error: "invalid credentials" });
 
   const tokenUser = await ensureTokenForUser(r.rows[0].id);
-  const w = await pool.query("SELECT coins FROM wallets WHERE user_id=$1", [r.rows[0].id]);
-  res.json({ tokenUser, playerName: r.rows[0].username, coins: w.rows[0]?.coins ?? 0 });
+  const w = await pool.query("SELECT coins FROM wallets WHERE user_id=$1", [
+    r.rows[0].id,
+  ]);
+  res.json({
+    tokenUser,
+    playerName: r.rows[0].username,
+    coins: w.rows[0]?.coins ?? 0,
+  });
 });
 
 // WALLET
 app.post("/wallet/me", async (req, res) => {
   const { tokenUser } = req.body || {};
-  if (!tokenUser) return res.status(400).json({ error: "tokenUser required" });
+  if (!tokenUser)
+    return res.status(400).json({ error: "tokenUser required" });
 
   const uid = await userIdFromToken(tokenUser);
   if (!uid) return res.status(401).json({ error: "invalid tokenUser" });
 
-  const w = await pool.query("SELECT coins FROM wallets WHERE user_id=$1", [uid]);
+  const w = await pool.query("SELECT coins FROM wallets WHERE user_id=$1", [
+    uid,
+  ]);
   res.json({ coins: w.rows[0]?.coins ?? 0 });
+});
+
+// === ESTADO DE RECOMPENSA DIARIA ===
+app.post("/rewards/daily/status", async (req, res) => {
+  try {
+    const { tokenUser } = req.body || {};
+    if (!tokenUser) {
+      return res.status(400).json({ error: "missing_tokenUser" });
+    }
+
+    const userId = await userIdFromToken(tokenUser);
+    if (!userId) {
+      return res.status(401).json({ error: "invalid_token" });
+    }
+
+    const dr = await pool.query(
+      "SELECT last_claim_date, streak FROM daily_rewards WHERE user_id = $1",
+      [userId]
+    );
+
+    const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+    let lastClaimDate: string | null = null;
+    let streak = 0;
+    let canClaim = true;
+    let todayReward = 0;
+
+    if (dr.rowCount === 0) {
+      // Nunca ha reclamado
+      streak = 0;
+      canClaim = true;
+      todayReward = getRewardForStreak(1);
+    } else {
+      lastClaimDate = dr.rows[0].last_claim_date
+        ? (dr.rows[0].last_claim_date as Date)
+            .toISOString()
+            .slice(0, 10)
+        : null;
+      streak = dr.rows[0].streak ?? 0;
+
+      if (!lastClaimDate) {
+        // No hay fecha previa, puede reclamar como día 1
+        canClaim = true;
+        todayReward = getRewardForStreak(1);
+      } else {
+        const dDiff = diffDays(today, lastClaimDate);
+        if (dDiff === 0) {
+          // Ya reclamó hoy
+          canClaim = false;
+          todayReward = getRewardForStreak(streak > 0 ? streak : 1);
+        } else if (dDiff === 1) {
+          // Día siguiente: mantiene racha
+          const nextStreak = streak + 1;
+          canClaim = true;
+          todayReward = getRewardForStreak(nextStreak);
+        } else {
+          // Pasaron varios días: se resetea la racha
+          canClaim = true;
+          todayReward = getRewardForStreak(1);
+        }
+      }
+    }
+
+    return res.json({
+      canClaim,
+      todayReward,
+      streak,
+      lastClaimDate,
+    });
+  } catch (e) {
+    console.error("daily status error", e);
+    return res.status(500).json({ error: "server_error" });
+  }
+});
+
+// === RECLAMAR RECOMPENSA DIARIA ===
+app.post("/rewards/daily/claim", async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { tokenUser } = req.body || {};
+    if (!tokenUser) {
+      client.release();
+      return res.status(400).json({ error: "missing_tokenUser" });
+    }
+
+    const userId = await userIdFromToken(tokenUser);
+    if (!userId) {
+      client.release();
+      return res.status(401).json({ error: "invalid_token" });
+    }
+
+    const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+
+    await client.query("BEGIN");
+
+    // Leer fila de daily_rewards con FOR UPDATE
+    const dr = await client.query(
+      "SELECT last_claim_date, streak FROM daily_rewards WHERE user_id = $1 FOR UPDATE",
+      [userId]
+    );
+
+    let lastClaimDate: string | null = null;
+    let streak = 0;
+    let newStreak = 1;
+
+    if (dr.rowCount === 0) {
+      // Primera vez
+      streak = 0;
+      newStreak = 1;
+    } else {
+      lastClaimDate = dr.rows[0].last_claim_date
+        ? (dr.rows[0].last_claim_date as Date)
+            .toISOString()
+            .slice(0, 10)
+        : null;
+      streak = dr.rows[0].streak ?? 0;
+
+      if (lastClaimDate) {
+        const dDiff = diffDays(today, lastClaimDate);
+        if (dDiff === 0) {
+          // Ya reclamó hoy
+          await client.query("ROLLBACK");
+          client.release();
+          return res
+            .status(400)
+            .json({ error: "already_claimed_today" });
+        } else if (dDiff === 1) {
+          // Día siguiente: subimos racha
+          newStreak = streak + 1;
+        } else {
+          // Pasaron varios días: racha a 1
+          newStreak = 1;
+        }
+      } else {
+        newStreak = 1;
+      }
+    }
+
+    const reward = getRewardForStreak(newStreak);
+
+    // Upsert en daily_rewards
+    if (dr.rowCount === 0) {
+      await client.query(
+        "INSERT INTO daily_rewards (user_id, last_claim_date, streak) VALUES ($1, $2, $3)",
+        [userId, today, newStreak]
+      );
+    } else {
+      await client.query(
+        "UPDATE daily_rewards SET last_claim_date = $1, streak = $2 WHERE user_id = $3",
+        [today, newStreak, userId]
+      );
+    }
+
+    // Sumar coins en wallets
+    const w = await client.query(
+      "SELECT coins FROM wallets WHERE user_id = $1 FOR UPDATE",
+      [userId]
+    );
+
+    if (w.rowCount === 0) {
+      await client.query(
+        "INSERT INTO wallets (user_id, coins) VALUES ($1, $2)",
+        [userId, reward]
+      );
+    } else {
+      await client.query(
+        "UPDATE wallets SET coins = coins + $1 WHERE user_id = $2",
+        [reward, userId]
+      );
+    }
+
+    // Registrar movimiento en wallet_tx usando helper
+    await addWalletTx(userId, reward, "DAILY_REWARD");
+
+    // Leer balance final
+    const wb = await client.query(
+      "SELECT coins FROM wallets WHERE user_id = $1",
+      [userId]
+    );
+    const balance = wb.rowCount > 0 ? wb.rows[0].coins : reward;
+
+    await client.query("COMMIT");
+    client.release();
+
+    return res.json({
+      added: reward,
+      balance,
+      streak: newStreak,
+      lastClaimDate: today,
+    });
+  } catch (e) {
+    console.error("daily claim error", e);
+    try {
+      await client.query("ROLLBACK");
+    } catch {}
+    client.release();
+    return res.status(500).json({ error: "server_error" });
+  }
 });
 
 // --- RUTA /wallet/topup PROTEGIDA (reemplaza la existente) ---
@@ -307,7 +582,9 @@ app.post("/wallet/topup", requireAdmin, async (req, res) => {
   const { tokenUser, amount } = req.body || {};
   const inc = Number(amount || 0);
   if (!tokenUser || !Number.isInteger(inc) || inc <= 0) {
-    return res.status(400).json({ error: "tokenUser/amount required" });
+    return res
+      .status(400)
+      .json({ error: "tokenUser/amount required" });
   }
   try {
     const userId = await getUserIdByToken(tokenUser);
@@ -319,30 +596,11 @@ app.post("/wallet/topup", requireAdmin, async (req, res) => {
     await addWalletTx(userId, inc, "ADMIN_TOPUP");
 
     return res.json({ ok: true, coins: newBal });
-  } catch (e:any) {
+  } catch (e: any) {
     console.error("ADMIN TOPUP ERROR:", e);
     return res.status(500).json({ error: "server error" });
   }
 });
-// /wallet/topup (para pruebas)
-/*
-app.post("/wallet/topup", async (req, res) => {
-  const { tokenUser, amount } = req.body || {};
-  const inc = Number(amount || 0);
-  if (!tokenUser || !Number.isInteger(inc) || inc <= 0) {
-    return res.status(400).json({ error: "tokenUser/amount required" });
-  }
-  const userId = await getUserIdByToken(tokenUser);
-  if (!userId) return res.status(401).json({ error: "invalid tokenUser" });
-
-  const cur = await getCoins(userId);
-  const newBal = cur + inc;
-  await setCoins(userId, newBal);
-  await addWalletTx(userId, inc, "TOPUP");
-
-  return res.json({ coins: newBal });
-});
-*/
 
 // USERS
 app.get("/admin/users", requireAdmin, async (_req, res) => {
@@ -357,7 +615,7 @@ app.get("/admin/users", requireAdmin, async (_req, res) => {
     `;
     const r = await pool.query(q);
     res.json(r.rows);
-  } catch (e:any) {
+  } catch (e: any) {
     console.error("ADMIN /admin/users error:", e);
     res.status(500).json({ error: String(e?.message || e) });
   }
@@ -366,7 +624,10 @@ app.get("/admin/users", requireAdmin, async (_req, res) => {
 // CREATE USERS
 app.post("/admin/create-user", requireAdmin, async (req, res) => {
   const { username, password, initialCoins } = req.body || {};
-  if (!username || !password) return res.status(400).json({ error: "username/password required" });
+  if (!username || !password)
+    return res
+      .status(400)
+      .json({ error: "username/password required" });
   try {
     const hash = await bcrypt.hash(password, 10);
     const u = await pool.query(
@@ -374,11 +635,15 @@ app.post("/admin/create-user", requireAdmin, async (req, res) => {
       [username, hash]
     );
     const uid = u.rows[0].id;
-    await pool.query("INSERT INTO wallets (user_id, coins) VALUES ($1, $2)", [uid, Number(initialCoins || 0)]);
+    await pool.query(
+      "INSERT INTO wallets (user_id, coins) VALUES ($1, $2)",
+      [uid, Number(initialCoins || 0)]
+    );
     res.json({ ok: true, user: u.rows[0] });
-  } catch (e:any) {
+  } catch (e: any) {
     console.error("ADMIN create-user error:", e);
-    if (e.code === "23505") return res.status(409).json({ error: "username exists" });
+    if (e.code === "23505")
+      return res.status(409).json({ error: "username exists" });
     res.status(500).json({ error: String(e?.message || e) });
   }
 });
@@ -386,10 +651,14 @@ app.post("/admin/create-user", requireAdmin, async (req, res) => {
 // DELETE USER
 app.post("/admin/delete-user", requireAdmin, async (req, res) => {
   const { username } = req.body || {};
-  if (!username) return res.status(400).json({ error: "username required" });
+  if (!username)
+    return res.status(400).json({ error: "username required" });
   try {
-    const u = await pool.query("SELECT id FROM users WHERE username=$1", [username]);
-    if (!u.rowCount) return res.status(404).json({ error: "user_not_found" });
+    const u = await pool.query("SELECT id FROM users WHERE username=$1", [
+      username,
+    ]);
+    if (!u.rowCount)
+      return res.status(404).json({ error: "user_not_found" });
     const id = u.rows[0].id;
 
     await pool.query("BEGIN");
@@ -401,8 +670,10 @@ app.post("/admin/delete-user", requireAdmin, async (req, res) => {
     await pool.query("COMMIT");
 
     res.json({ ok: true });
-  } catch (e:any) {
-    try { await pool.query("ROLLBACK"); } catch {}
+  } catch (e: any) {
+    try {
+      await pool.query("ROLLBACK");
+    } catch {}
     console.error("ADMIN delete-user error:", e);
     res.status(500).json({ error: String(e?.message || e) });
   }
@@ -412,7 +683,8 @@ app.post("/admin/delete-user", requireAdmin, async (req, res) => {
 app.post("/admin/set-coins", requireAdmin, async (req, res) => {
   const { username, tokenUser, coins } = req.body || {};
   const newCoins = Number(coins);
-  if (!Number.isInteger(newCoins)) return res.status(400).json({ error: "coins must be integer" });
+  if (!Number.isInteger(newCoins))
+    return res.status(400).json({ error: "coins must be integer" });
 
   try {
     if (username) {
@@ -429,8 +701,10 @@ app.post("/admin/set-coins", requireAdmin, async (req, res) => {
       );
       return res.json({ ok: true, rows: r.rows });
     }
-    return res.status(400).json({ error: "username_or_token required" });
-  } catch (e:any) {
+    return res
+      .status(400)
+      .json({ error: "username_or_token required" });
+  } catch (e: any) {
     console.error("ADMIN set-coins error:", e);
     res.status(500).json({ error: String(e?.message || e) });
   }
