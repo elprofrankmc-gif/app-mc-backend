@@ -710,5 +710,53 @@ app.post("/admin/set-coins", requireAdmin, async (req, res) => {
   }
 });
 
+//RESETEAR FILA
+app.post("/admin/reward-reset-full", requireAdmin, async (req, res) => {
+  const { userId } = req.body || {};
+  if (!userId) return res.status(400).json({ error: "userId required" });
+
+  try {
+    await pool.query("DELETE FROM daily_rewards WHERE user_id=$1", [userId]);
+    return res.json({ ok: true });
+  } catch (e: any) {
+    console.error("RESET FULL ERROR:", e);
+    return res.status(500).json({ error: "server error" });
+  }
+});
+
+//RESETEAR LA FECHA
+app.post("/admin/reward-reset-date", requireAdmin, async (req, res) => {
+  const { userId } = req.body || {};
+  if (!userId) return res.status(400).json({ error: "userId required" });
+
+  try {
+    await pool.query(
+      "UPDATE daily_rewards SET last_claim_date=NULL WHERE user_id=$1",
+      [userId]
+    );
+    return res.json({ ok: true });
+  } catch (e: any) {
+    console.error("RESET DATE ERROR:", e);
+    return res.status(500).json({ error: "server error" });
+  }
+});
+
+//RESETEAR RACHA
+app.post("/admin/reward-reset-streak", requireAdmin, async (req, res) => {
+  const { userId } = req.body || {};
+  if (!userId) return res.status(400).json({ error: "userId required" });
+
+  try {
+    await pool.query(
+      "UPDATE daily_rewards SET streak=0 WHERE user_id=$1",
+      [userId]
+    );
+    return res.json({ ok: true });
+  } catch (e: any) {
+    console.error("RESET STREAK ERROR:", e);
+    return res.status(500).json({ error: "server error" });
+  }
+});
+
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => console.log(`API lista en http://localhost:${PORT}`));
