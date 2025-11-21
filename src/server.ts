@@ -134,6 +134,14 @@ async function userIdFromToken(tokenUser: string) {
   );
   return u.rowCount ? (u.rows[0].id as number) : null;
 }
+//HELPER PARA USERNAME
+async function getUserIdByUsername(username: string): Promise<number | null> {
+  const r = await pool.query(
+    "SELECT id FROM users WHERE username = $1",
+    [username]
+  );
+  return r.rowCount ? (r.rows[0].id as number) : null;
+}
 
 // === Helpers para recompensas diarias ===
 
@@ -363,6 +371,91 @@ app.post("/auth/login", async (req, res) => {
     playerName: r.rows[0].username,
     coins: w.rows[0]?.coins ?? 0,
   });
+});
+
+// ACTUALIZAR NOMBRE DE USUARIO
+app.post("/auth/update-username", async (req, res) => {
+  const { tokenUser, newUsername } = req.body || {};
+
+  if (!tokenUser || !newUsername) {
+    return res.status(400).json({ error: "tokenUser/newUsername required" });
+  }
+
+  const trimmed = String(newUsername).trim();
+  if (trimmed.length < 3) {
+    return res.status(400).json({ error: "username too short" });
+  }
+  if (trimmed.length > 20) {
+    return res.status(400).json({ error: "username too long" });
+  }
+
+  const userId = await userIdFromToken(tokenUser);
+  if (!userId) {
+    return res.status(401).json({ error: "invalid tokenUser" });
+  }
+
+  try {
+    const r = await pool.query(
+      "UPDATE users SET username = $1 WHERE id = $2 RETURNING username",
+      [trimmed, userId]
+    );
+    return res.json({
+      ok: true,
+      playerName: r.rows[0]?.username ?? trimmed,
+    });
+  } catch (e: any) {
+    console.error("UPDATE USERNAME ERROR:", e);
+    if (e.code === "23505") {
+      // unique_violation
+      return res.status(409).json({ error: "username already exists" });
+    }
+    return res.status(500).json({ error: "server error" });
+  }
+});
+
+// CAMBIAR CONTRASEÑA
+app.post("/auth/change-password", async (req, res) => {
+  const { tokenUser, oldPassword, newPassword } = req.body || {};
+
+  if (!tokenUser || !oldPassword || !newPassword) {
+    return res.status(400).json({ error: "missing_fields" });
+  }
+  if (String(newPassword).length < 6) {
+    return res
+      .status(400)
+      .json({ error: "password too short" });
+  }
+
+  const userId = await userIdFromToken(tokenUser);
+  if (!userId) {
+    return res.status(401).json({ error: "invalid tokenUser" });
+  }
+
+  try {
+    const r = await pool.query(
+      "SELECT pass_hash FROM users WHERE id = $1",
+      [userId]
+    );
+    if (!r.rowCount) {
+      return res.status(404).json({ error: "user not found" });
+    }
+
+    const ok = await bcrypt.compare(oldPassword, r.rows[0].pass_hash);
+    if (!ok) {
+      return res.status(401).json({ error: "wrong_password" });
+    }
+
+    const newHash = await bcrypt.hash(newPassword, 10);
+    await pool.query(
+      "UPDATE users SET pass_hash = $1 WHERE id = $2",
+      [newHash, userId]
+    );
+
+    return res.json({ ok: true });
+  } catch (e: any) {
+    console.error("CHANGE PASSWORD ERROR:", e);
+    return res.status(500).json({ error: "server error" });
+  }
 });
 
 // WALLET
@@ -602,15 +695,52 @@ app.post("/wallet/topup", requireAdmin, async (req, res) => {
   }
 });
 
+// --- TOPUP POR USERNAME (para el panel admin) ---
+app.post("/wallet/topup-username", requireAdmin, async (req, res) => {
+  const { username, amount } = req.body || {};
+  const inc = Number(amount || 0);
+
+  if (!username || !Number.isInteger(inc) || inc <= 0) {
+    return res
+      .status(400)
+      .json({ error: "username/amount required" });
+  }
+
+  try {
+    const userId = await getUserIdByUsername(username);
+    if (!userId) {
+      return res.status(404).json({ error: "username not found" });
+    }
+
+    const cur = await getCoins(userId);
+    const newBal = cur + inc;
+    await setCoins(userId, newBal);
+    await addWalletTx(userId, inc, "ADMIN_TOPUP_USERNAME");
+
+    return res.json({ ok: true, coins: newBal });
+  } catch (e: any) {
+    console.error("ADMIN TOPUP USERNAME ERROR:", e);
+    return res.status(500).json({ error: "server error" });
+  }
+});
+
 // USERS
 app.get("/admin/users", requireAdmin, async (_req, res) => {
   try {
     const q = `
-      SELECT u.id, u.username, u.player_name, u.pass_hash,
-             t.token_user, COALESCE(w.coins,0) AS coins
+      SELECT
+        u.id,
+        u.username,
+        u.player_name,
+        u.pass_hash,
+        t.token_user,
+        COALESCE(w.coins, 0) AS coins,
+        dr.last_claim_date AS daily_last_claim,
+        dr.streak       AS daily_streak
       FROM users u
       LEFT JOIN user_tokens t ON t.user_id = u.id
       LEFT JOIN wallets w ON w.user_id = u.id
+      LEFT JOIN daily_rewards dr ON dr.user_id = u.id
       ORDER BY u.id
     `;
     const r = await pool.query(q);
@@ -620,6 +750,7 @@ app.get("/admin/users", requireAdmin, async (_req, res) => {
     res.status(500).json({ error: String(e?.message || e) });
   }
 });
+
 
 // CREATE USERS
 app.post("/admin/create-user", requireAdmin, async (req, res) => {
@@ -710,15 +841,16 @@ app.post("/admin/set-coins", requireAdmin, async (req, res) => {
   }
 });
 
-//RESETEAR FILA
+// RESETEAR FILA COMPLETA (borra registro de daily_rewards)
 app.post("/admin/reward-reset-full", requireAdmin, async (req, res) => {
   const { username } = req.body || {};
-if (!username) return res.status(400).json({ error: "username required" });
+  if (!username) return res.status(400).json({ error: "username required" });
 
   try {
     await pool.query(
-  "DELETE FROM daily_rewards WHERE user_id = (SELECT id FROM users WHERE username=$1)",
-  [username]);
+      "DELETE FROM daily_rewards WHERE user_id = (SELECT id FROM users WHERE username=$1)",
+      [username]
+    );
     return res.json({ ok: true });
   } catch (e: any) {
     console.error("RESET FULL ERROR:", e);
@@ -726,15 +858,20 @@ if (!username) return res.status(400).json({ error: "username required" });
   }
 });
 
-//RESETEAR LA FECHA
+// RESETEAR FECHA (permitir que pueda reclamar de nuevo)
 app.post("/admin/reward-reset-date", requireAdmin, async (req, res) => {
   const { username } = req.body || {};
-if (!username) return res.status(400).json({ error: "username required" });
+  if (!username) return res.status(400).json({ error: "username required" });
 
   try {
     await pool.query(
-  "DELETE FROM daily_rewards WHERE user_id = (SELECT id FROM users WHERE username=$1)",
-  [username]);
+      `
+      UPDATE daily_rewards
+      SET last_claim_date = NULL
+      WHERE user_id = (SELECT id FROM users WHERE username=$1)
+      `,
+      [username]
+    );
     return res.json({ ok: true });
   } catch (e: any) {
     console.error("RESET DATE ERROR:", e);
@@ -742,21 +879,27 @@ if (!username) return res.status(400).json({ error: "username required" });
   }
 });
 
-//RESETEAR RACHA
+// RESETEAR RACHA (pero respeta la fecha)
 app.post("/admin/reward-reset-streak", requireAdmin, async (req, res) => {
   const { username } = req.body || {};
-if (!username) return res.status(400).json({ error: "username required" });
+  if (!username) return res.status(400).json({ error: "username required" });
 
   try {
     await pool.query(
-  "DELETE FROM daily_rewards WHERE user_id = (SELECT id FROM users WHERE username=$1)",
-  [username]);
+      `
+      UPDATE daily_rewards
+      SET streak = 0
+      WHERE user_id = (SELECT id FROM users WHERE username=$1)
+      `,
+      [username]
+    );
     return res.json({ ok: true });
   } catch (e: any) {
     console.error("RESET STREAK ERROR:", e);
     return res.status(500).json({ error: "server error" });
   }
 });
+
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => console.log(`API lista en http://localhost:${PORT}`));
