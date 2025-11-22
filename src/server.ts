@@ -61,6 +61,24 @@ const UNIT_PRICE: Record<string, number> = {
   "minecraft:golden_apple": 20,
   "minecraft:netherite_ingot": 45,
 };
+//CLIMA
+type WeatherKind = "clear" | "rain" | "thunder";
+
+const WEATHER_PRICE: Record<WeatherKind, number> = {
+  clear: 30,    // ☀️ Soleado
+  rain: 25,     // 🌧️ Lluvia
+  thunder: 40,  // ⛈️ Tormenta
+};
+
+//TIEMPO
+type TimeKind = "day" | "sunset" | "night";
+
+const TIME_PRICE: Record<TimeKind, number> = {
+  day: 20,      // ☀️ Día
+  sunset: 22,   // 🌇 Atardecer
+  night: 18,    // 🌙 Noche
+};
+
 
 async function getUserIdByToken(tokenUser: string): Promise<number | null> {
   const r = await pool.query(
@@ -298,6 +316,91 @@ app.post("/purchase", async (req, res) => {
 
   return res.json({ ok: true, orderId: ins.rows[0].id, balance: newBal });
 });
+
+//CLIMA MAS TIEMPO
+app.post("/world/change", async (req, res) => {
+  const { tokenUser, changeType, value } = req.body || {};
+
+  if (!tokenUser) return res.status(401).json({ error: "unauthorized" });
+
+  // Debe estar vinculado
+  if (!bindings.has(tokenUser)) {
+    return res.status(401).json({ error: "account_not_linked" });
+  }
+
+  const type = String(changeType || "").toLowerCase();
+
+  // Puede ser WEATHER o TIME
+  const isWeather = ["clear", "rain", "thunder"].includes(type);
+  const isTime = ["day", "sunset", "night"].includes(type);
+
+  if (!isWeather && !isTime) {
+    return res.status(400).json({ error: "invalid_change_type" });
+  }
+
+  // Precios
+  const cost = isWeather
+    ? WEATHER_PRICE[type as keyof typeof WEATHER_PRICE]
+    : TIME_PRICE[type as keyof typeof TIME_PRICE];
+
+  // Usuario
+  const userId = await getUserIdByToken(tokenUser);
+  if (!userId) {
+    return res.status(401).json({ error: "invalid_tokenUser" });
+  }
+
+  const cur = await getCoins(userId);
+  if (cur < cost) {
+    return res.status(400).json({
+      error: "not_enough_coins",
+      need: cost,
+      have: cur,
+    });
+  }
+
+  const newBal = cur - cost;
+
+  // Descontar
+  await setCoins(userId, newBal);
+
+  // Auditoría
+  const reason = isWeather
+    ? `WEATHER_${type.toUpperCase()}`
+    : `TIME_${type.toUpperCase()}`;
+
+  await addWalletTx(userId, -cost, reason);
+
+  // Crear orden y tarea
+  const playerUuid = bindings.get(tokenUser)!;
+
+  const itemId = isWeather
+    ? `weather:${type}`
+    : `time:${type}`;
+
+  const ins = await pool.query(
+    "INSERT INTO orders (user_id, mc_uuid, item_id, amount, price, status) VALUES ($1,$2,$3,$4,$5,'PENDING') RETURNING id",
+    [userId, playerUuid, itemId, 1, cost]
+  );
+
+  const id = crypto.randomUUID();
+
+  tasks.push({
+    id,
+    playerUuid,
+    itemId,
+    amount: 1,
+    message: isWeather
+      ? `Cambio de clima: ${type}`
+      : `Cambio de hora: ${type}`,
+  });
+
+  return res.json({
+    ok: true,
+    orderId: ins.rows[0].id,
+    balance: newBal,
+  });
+});
+
 
 // 4) Lo llama el plugin: obtiene tareas pendientes
 app.get("/tasks/pull", (_req, res) => {
