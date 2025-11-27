@@ -182,17 +182,52 @@ function diffDays(a: string, b: string): number {
 }
 
 // === “BD” en memoria (demo) ===
+// Códigos /link temporales (5 min)
 type LinkData = { uuid: string; name: string; exp: number };
 const links = new Map<string, LinkData>(); // code -> {uuid,name,exp}
-const bindings = new Map<string, string>(); // tokenUser -> uuid
-type Task = {
-  id: string;
-  playerUuid: string;
-  itemId: string;
-  amount: number;
-  message: string;
-};
-const tasks: Task[] = []; // cola de tareas
+
+// --- Vinculación persistente ---
+// Tabla: player_bindings (token_user PK)
+
+async function saveBinding(tokenUser: string, uuid: string, name: string) {
+  await pool.query(`
+    INSERT INTO player_bindings (token_user, mc_uuid, mc_name)
+    VALUES ($1, $2, $3)
+    ON CONFLICT (token_user)
+    DO UPDATE SET mc_uuid=$2, mc_name=$3, linked_at=NOW()
+  `, [tokenUser, uuid, name]);
+}
+
+async function getBinding(tokenUser: string) {
+  const r = await pool.query(
+    "SELECT mc_uuid, mc_name FROM player_bindings WHERE token_user=$1",
+    [tokenUser]
+  );
+  return r.rowCount ? r.rows[0] : null;
+}
+
+// --- Cola de tareas persistente ---
+// Tabla: pending_tasks
+
+async function addTask(id: string, uuid: string, itemId: string, amount: number, message: string) {
+  await pool.query(`
+    INSERT INTO pending_tasks (id, player_uuid, item_id, amount, message)
+    VALUES ($1, $2, $3, $4, $5)
+  `, [id, uuid, itemId, amount, message]);
+}
+
+async function getTasks() {
+  const r = await pool.query("SELECT * FROM pending_tasks ORDER BY created_at ASC");
+  return r.rows;
+}
+
+async function deleteTasks(ids: string[]) {
+  await pool.query(
+    "DELETE FROM pending_tasks WHERE id = ANY($1)",
+    [ids]
+  );
+}
+
 
 // 1) Lo llama el plugin: crea código de vinculación
 app.post("/link/start", (req, res) => {
@@ -207,50 +242,59 @@ app.post("/link/start", (req, res) => {
 // 2) Lo llama la APP: completa vinculación con el código
 app.post("/link/complete", async (req, res) => {
   const { code, tokenUser } = req.body || {};
+
   if (!code || !tokenUser)
     return res.status(400).json({ error: "code/tokenUser required" });
 
+  // Código temporal en memoria para link (solo 5 min)
   const data = links.get(code);
   if (!data || Date.now() > data.exp) {
     return res.status(400).json({ error: "invalid_or_expired_code" });
   }
 
-  // validar tokenUser → obtener userId del usuario LOGUEADO
   const userId = await userIdFromToken(tokenUser);
-  if (!userId) return res.status(401).json({ error: "invalid tokenUser" });
+  if (!userId)
+    return res.status(401).json({ error: "invalid tokenUser" });
 
-  // vincular ese token con el uuid de MC
-  bindings.set(tokenUser, data.uuid);
+  // Guardar vinculación PERMANENTEMENTE
+  await saveBinding(tokenUser, data.uuid, data.name);
+
   links.delete(code);
 
-  // opcional: guarda el nombre del jugador para mostrar en la app
-  await pool
-    .query("UPDATE users SET player_name = $1 WHERE id = $2", [data.name, userId])
-    .catch(() => {});
+  await pool.query(
+    "UPDATE users SET player_name=$1 WHERE id=$2",
+    [data.name, userId]
+  );
 
-  // devolver el mismo token y el nombre actual (cuenta) y opcionalmente el playerName de MC
-  const w = await pool.query("SELECT coins FROM wallets WHERE user_id=$1", [
-    userId,
-  ]);
+  const w = await pool.query(
+    "SELECT coins FROM wallets WHERE user_id=$1",
+    [userId]
+  );
+
   res.json({
     ok: true,
-    tokenUser, // el mismo token del usuario logueado (123)
-    accountName: (
-      await pool.query("SELECT username FROM users WHERE id=$1", [userId])
-    ).rows[0]?.username,
-    minecraftName: data.name, // p.ej. TheFranckMC
+    tokenUser,
+    accountName: (await pool.query(
+      "SELECT username FROM users WHERE id=$1",
+      [userId]
+    )).rows[0]?.username,
+    minecraftName: data.name,
     coins: w.rows[0]?.coins ?? 0,
   });
 });
+
 
 // 3) Lo llama la APP: crea una “orden de compra” (dar ítem)
 app.post("/purchase", async (req, res) => {
   const { tokenUser, itemId, amount } = req.body || {};
   if (!tokenUser) return res.status(401).json({ error: "unauthorized" });
 
-  // validar vinculación (sigues usando tu mapa en memoria)
-  if (!bindings.has(tokenUser))
+  // --- VALIDAR VINCULACIÓN (BD) ---
+  const binding = await getBinding(tokenUser);
+  if (!binding)
     return res.status(401).json({ error: "account_not_linked" });
+
+  const playerUuid = binding.mc_uuid;
 
   // validar item y qty
   const okItems = new Set([
@@ -264,7 +308,6 @@ app.post("/purchase", async (req, res) => {
     "minecraft:cooked_cod",
     "minecraft:cooked_salmon",
     "minecraft:golden_carrot",
-
     "minecraft:diamond",
     "minecraft:iron_ingot",
     "minecraft:golden_apple",
@@ -289,89 +332,75 @@ app.post("/purchase", async (req, res) => {
 
   const cur = await getCoins(userId);
   if (cur < total)
-    return res
-      .status(400)
-      .json({ error: "not_enough_coins", need: total, have: cur });
+    return res.status(400).json({
+      error: "not_enough_coins",
+      need: total,
+      have: cur,
+    });
 
   // descontar y auditar
   const newBal = cur - total;
   await setCoins(userId, newBal);
   await addWalletTx(userId, -total, "PURCHASE");
 
-  // persistir orden y encolar tarea
-  const playerUuid = bindings.get(tokenUser)!;
+  // persistir orden
   const ins = await pool.query(
     "INSERT INTO orders (user_id, mc_uuid, item_id, amount, price, status) VALUES ($1,$2,$3,$4,$5,'PENDING') RETURNING id",
     [userId, playerUuid, itemId, qty, total]
   );
 
+  // tarea persistente
   const id = crypto.randomUUID();
-  tasks.push({
-    id,
-    playerUuid,
-    itemId,
-    amount: qty,
-    message: "Compra completada",
-  });
+  await addTask(id, playerUuid, itemId, qty, "Compra completada");
 
   return res.json({ ok: true, orderId: ins.rows[0].id, balance: newBal });
 });
 
+
 //CLIMA MAS TIEMPO
 app.post("/world/change", async (req, res) => {
-  const { tokenUser, changeType, value } = req.body || {};
+  const { tokenUser, changeType } = req.body || {};
 
   if (!tokenUser) return res.status(401).json({ error: "unauthorized" });
 
-  // Debe estar vinculado
-  if (!bindings.has(tokenUser)) {
+  // --- VALIDAR VINCULACIÓN ---
+  const binding = await getBinding(tokenUser);
+  if (!binding)
     return res.status(401).json({ error: "account_not_linked" });
-  }
+
+  const playerUuid = binding.mc_uuid;
 
   const type = String(changeType || "").toLowerCase();
 
-  // Puede ser WEATHER o TIME
   const isWeather = ["clear", "rain", "thunder"].includes(type);
   const isTime = ["day", "sunset", "night"].includes(type);
 
-  if (!isWeather && !isTime) {
+  if (!isWeather && !isTime)
     return res.status(400).json({ error: "invalid_change_type" });
-  }
 
-  // Precios
   const cost = isWeather
-    ? WEATHER_PRICE[type as keyof typeof WEATHER_PRICE]
-    : TIME_PRICE[type as keyof typeof TIME_PRICE];
+    ? WEATHER_PRICE[type]
+    : TIME_PRICE[type];
 
-  // Usuario
   const userId = await getUserIdByToken(tokenUser);
-  if (!userId) {
-    return res.status(401).json({ error: "invalid_tokenUser" });
-  }
+  if (!userId) return res.status(401).json({ error: "invalid_tokenUser" });
 
   const cur = await getCoins(userId);
-  if (cur < cost) {
+  if (cur < cost)
     return res.status(400).json({
       error: "not_enough_coins",
       need: cost,
       have: cur,
     });
-  }
 
   const newBal = cur - cost;
-
-  // Descontar
   await setCoins(userId, newBal);
 
-  // Auditoría
-  const reason = isWeather
-    ? `WEATHER_${type.toUpperCase()}`
-    : `TIME_${type.toUpperCase()}`;
-
-  await addWalletTx(userId, -cost, reason);
-
-  // Crear orden y tarea
-  const playerUuid = bindings.get(tokenUser)!;
+  await addWalletTx(
+    userId,
+    -cost,
+    isWeather ? `WEATHER_${type.toUpperCase()}` : `TIME_${type.toUpperCase()}`
+  );
 
   const itemId = isWeather
     ? `weather:${type}`
@@ -384,15 +413,15 @@ app.post("/world/change", async (req, res) => {
 
   const id = crypto.randomUUID();
 
-  tasks.push({
+  await addTask(
     id,
     playerUuid,
     itemId,
-    amount: 1,
-    message: isWeather
+    1,
+    isWeather
       ? `Cambio de clima: ${type}`
-      : `Cambio de hora: ${type}`,
-  });
+      : `Cambio de hora: ${type}`
+  );
 
   return res.json({
     ok: true,
@@ -402,23 +431,24 @@ app.post("/world/change", async (req, res) => {
 });
 
 
+
 // 4) Lo llama el plugin: obtiene tareas pendientes
-app.get("/tasks/pull", (_req, res) => {
+app.get("/tasks/pull", async (_req, res) => {
+  const tasks = await getTasks();
   res.json(tasks);
 });
 
+
 // 5) Lo llama el plugin: confirma tareas entregadas
-app.post("/tasks/ack", (req, res) => {
+app.post("/tasks/ack", async (req, res) => {
   const { ids } = req.body || {};
   if (!Array.isArray(ids))
     return res.status(400).json({ error: "ids_required" });
 
-  for (const id of ids) {
-    const i = tasks.findIndex((t) => t.id === id);
-    if (i >= 0) tasks.splice(i, 1);
-  }
+  await deleteTasks(ids);
   res.json({ ok: true });
 });
+
 
 // REGISTER
 app.post("/auth/register", async (req, res) => {
