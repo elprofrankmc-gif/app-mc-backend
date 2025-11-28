@@ -239,6 +239,19 @@ app.post("/link/start", (req, res) => {
   res.json({ code });
 });
 
+//1.1) Si ya esta vinculado te lleva al ShopScreen
+app.post("/link/status", async (req, res) => {
+  const { tokenUser } = req.body || {};
+  if (!tokenUser) return res.json({ linked: false });
+
+  const r = await pool.query(
+    "SELECT mc_uuid FROM player_bindings WHERE token_user=$1",
+    [tokenUser]
+  );
+
+  res.json({ linked: r.rowCount > 0 });
+});
+
 // 2) Lo llama la APP: completa vinculación con el código
 app.post("/link/complete", async (req, res) => {
   const { code, tokenUser } = req.body || {};
