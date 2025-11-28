@@ -238,6 +238,26 @@ async function deleteTasks(ids: string[]) {
   );
 }
 
+// --- Saber si un tokenUser YA está vinculado ---
+app.post("/link/info", async (req, res) => {
+  const { tokenUser } = req.body || {};
+  if (!tokenUser) return res.json({ linked: false });
+
+  const r = await pool.query(
+    "SELECT mc_uuid, mc_name FROM player_bindings WHERE token_user=$1",
+    [tokenUser]
+  );
+
+  if (!r.rowCount) {
+    return res.json({ linked: false });
+  }
+
+  res.json({
+    linked: true,
+    mc_uuid: r.rows[0].mc_uuid,
+    mc_name: r.rows[0].mc_name,
+  });
+});
 
 // 1) Lo llama el plugin: crea código de vinculación
 app.post("/link/start", (req, res) => {
@@ -507,7 +527,7 @@ app.post("/auth/login", async (req, res) => {
     return res
       .status(400)
       .json({ error: "username/password required" });
-
+  
   const r = await pool.query(
     "SELECT id, username, pass_hash FROM users WHERE username=$1",
     [username]
