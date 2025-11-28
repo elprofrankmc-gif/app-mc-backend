@@ -1,9 +1,11 @@
 import express from "express";
+import { Request, Response } from "express";
 import cors from "cors";
 import crypto from "crypto";
 import bcrypt from "bcrypt";
 import { pool } from "./db";
 import { newTokenUser } from "./tokens";
+
 
 // --- REQUIRE ADMIN (pegar en server.ts) ---
 const ADMIN_SECRET = process.env.ADMIN_SECRET || "";
@@ -23,6 +25,13 @@ function requireAdmin(req: any, res: any, next: any) {
 const app = express();
 app.use(cors());
 app.use(express.json());
+interface AuthRequest extends Request {
+  user?: {
+    id: number;
+    // otros campos si tienes
+  };
+}
+
 
 // ─── Arranque y rutas de verificación ─────────────────────────────────────────
 app.get("/", (_req, res) => res.send("OK ROOT ✅"));
@@ -1075,6 +1084,81 @@ app.post("/admin/reward-reset-streak", requireAdmin, async (req, res) => {
     return res.status(500).json({ error: "server error" });
   }
 });
+
+// APLICAR EFECTO AL JUGADOR
+app.post("/effects/apply", async (req, res) => {
+  const { tokenUser, effect, amplifier, duration } = req.body || {};
+
+  // 1. Validar autenticación
+  if (!tokenUser) return res.status(401).json({ error: "unauthorized" });
+
+  // 2. Validar vinculación con Minecraft
+  const binding = await getBinding(tokenUser);
+  if (!binding)
+    return res.status(401).json({ error: "account_not_linked" });
+
+  const playerUuid = binding.mc_uuid;
+
+  // 3. Validar datos recibidos
+  if (!effect || amplifier === undefined || duration === undefined) {
+    return res.status(400).json({ error: "missing_fields" });
+  }
+
+  const amp = Number(amplifier);
+  const dur = Number(duration);
+
+  if (amp < 0 || dur <= 0)
+    return res.status(400).json({ error: "invalid_effect_data" });
+
+  // 4. Obtener userId usando tokenUser
+  const userId = await getUserIdByToken(tokenUser);
+  if (!userId) return res.status(401).json({ error: "invalid_tokenUser" });
+
+  // 5. Calcular costo
+  const EFFECT_BASE_COST = 20;
+  const total = EFFECT_BASE_COST * (amp + 1);
+
+  // 6. Verificar coins
+  const cur = await getCoins(userId);
+  if (cur < total)
+    return res.status(400).json({
+      error: "not_enough_coins",
+      need: total,
+      have: cur,
+    });
+
+  // 7. Descontar coins
+  const newBal = cur - total;
+  await setCoins(userId, newBal);
+
+  // 8. Registrar transacción en wallet
+  await addWalletTx(userId, -total, `EFFECT_${effect}`);
+
+  // 9. Registrar orden
+  const ins = await pool.query(
+    "INSERT INTO orders (user_id, mc_uuid, item_id, amount, price, status) VALUES ($1,$2,$3,$4,$5,'PENDING') RETURNING id",
+    [userId, playerUuid, `effect:${effect}`, 1, total]
+  );
+
+  // 10. Registrar tarea persistente
+  const id = crypto.randomUUID();
+
+  const payload = {
+    effect,
+    amplifier: amp,
+    duration: dur
+  };
+
+  await addTask(id, playerUuid, "set_effect", 1, JSON.stringify(payload));
+
+  // 11. Respuesta
+  return res.json({
+    ok: true,
+    orderId: ins.rows[0].id,
+    balance: newBal,
+  });
+});
+
 
 
 const PORT = process.env.PORT || 3001;
