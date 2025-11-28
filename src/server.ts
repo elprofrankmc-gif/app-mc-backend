@@ -217,9 +217,19 @@ async function addTask(id: string, uuid: string, itemId: string, amount: number,
 }
 
 async function getTasks() {
-  const r = await pool.query("SELECT * FROM pending_tasks ORDER BY created_at ASC");
+  const r = await pool.query(`
+    SELECT
+      id,
+      player_uuid AS "playerUuid",
+      item_id    AS "itemId",
+      amount,
+      message
+    FROM pending_tasks
+    ORDER BY created_at ASC
+  `);
   return r.rows;
 }
+
 
 async function deleteTasks(ids: string[]) {
   await pool.query(
