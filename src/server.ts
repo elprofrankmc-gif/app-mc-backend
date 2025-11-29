@@ -1159,6 +1159,96 @@ app.post("/effects/apply", async (req, res) => {
   });
 });
 
+// ========================
+//  GUARDAR CHECKPOINT
+// ========================
+app.post("/checkpoint/save", async (req, res) => {
+  const { tokenUser, x, y, z, world } = req.body || {};
+
+  if (!tokenUser) return res.status(401).json({ error: "unauthorized" });
+
+  // Validar vinculación
+  const binding = await getBinding(tokenUser);
+  if (!binding)
+    return res.status(401).json({ error: "account_not_linked" });
+
+  const userId = await getUserIdByToken(tokenUser);
+  if (!userId) return res.status(401).json({ error: "invalid_tokenUser" });
+
+  // Validar coordenadas
+  const xi = Number(x);
+  const yi = Number(y);
+  const zi = Number(z);
+
+  if (!Number.isInteger(xi) || !Number.isInteger(yi) || !Number.isInteger(zi))
+    return res.status(400).json({ error: "coords_integer_only" });
+
+  if (xi < -99999 || xi > 99999) return res.status(400).json({ error: "x_out_of_range" });
+  if (zi < -99999 || zi > 99999) return res.status(400).json({ error: "z_out_of_range" });
+  if (yi < 1 || yi > 255) return res.status(400).json({ error: "y_out_of_range" });
+
+  const w = String(world || "world");
+
+  // Guardar o actualizar checkpoint
+  await pool.query(
+    `INSERT INTO checkpoints (user_id, x, y, z, world, updated_at)
+     VALUES ($1,$2,$3,$4,$5,now())
+     ON CONFLICT (user_id)
+     DO UPDATE SET x=$2, y=$3, z=$4, world=$5, updated_at=now()`,
+    [userId, xi, yi, zi, w]
+  );
+
+  return res.json({
+    ok: true,
+    x: xi,
+    y: yi,
+    z: zi,
+    world: w,
+  });
+});
+
+// ========================
+//  IR A CHECKPOINT (TP)
+// ========================
+app.post("/checkpoint/go", async (req, res) => {
+  const { tokenUser } = req.body || {};
+
+  if (!tokenUser) return res.status(401).json({ error: "unauthorized" });
+
+  // Validar vinculación
+  const binding = await getBinding(tokenUser);
+  if (!binding)
+    return res.status(401).json({ error: "account_not_linked" });
+
+  const userId = await getUserIdByToken(tokenUser);
+  if (!userId) return res.status(401).json({ error: "invalid_tokenUser" });
+
+  const playerUuid = binding.mc_uuid;
+
+  // Cargar checkpoint
+  const cp = await pool.query(
+    "SELECT x, y, z, world FROM checkpoints WHERE user_id = $1",
+    [userId]
+  );
+
+  if (!cp.rowCount)
+    return res.status(404).json({ error: "no_checkpoint_saved" });
+
+  const { x, y, z, world } = cp.rows[0];
+
+  // Crear tarea persistente
+  const id = crypto.randomUUID();
+await addTask(
+  id,
+  playerUuid,
+  "tp:checkpoint",
+  1,
+  JSON.stringify({ x, y, z, world })  // 👈 va dentro del message
+);
+
+});
+
+
 
 
 const PORT = process.env.PORT || 3001;
