@@ -1251,7 +1251,7 @@ app.post("/teleport/go", async (req, res) => {
 // ⭐ GUARDAR CHECKPOINT (GRATIS)
 // ======================================================
 app.post("/checkpoint/save", async (req, res) => {
-  const { tokenUser, x, y, z, world } = req.body || {};
+  const { tokenUser } = req.body;
 
   if (!tokenUser)
     return res.json({ error: "unauthorized" });
@@ -1260,38 +1260,37 @@ app.post("/checkpoint/save", async (req, res) => {
   if (!binding)
     return res.json({ error: "account_not_linked" });
 
-  const userId = await getUserIdByToken(tokenUser);
-  if (!userId)
-    return res.json({ error: "invalid_tokenUser" });
-
-  const xi = Number(x);
-  const yi = Number(y);
-  const zi = Number(z);
-
-  // 🚨 SI ES NaN → ERROR
-  if (!Number.isFinite(xi) || !Number.isFinite(yi) || !Number.isFinite(zi)) {
-    return res.json({ error: "coords_invalid" });
-  }
-
-  const w = String(world || "world");
-
-  await pool.query(
-    `
-    INSERT INTO checkpoints (user_id, x, y, z, world, updated_at)
-    VALUES ($1,$2,$3,$4,$5, now())
-    ON CONFLICT (user_id)
-    DO UPDATE SET x=$2, y=$3, z=$4, world=$5, updated_at=now()
-    `,
-    [userId, xi, yi, zi, w]
+  // Enviar tarea al plugin para pedir pos
+  await addTpTask(
+    binding.mc_uuid,
+    "tp:getpos",
+    "",
+    "save_checkpoint"
   );
 
-  return res.json({
-    ok: true,
-    x: xi, y: yi, z: zi, world: w
-  });
+  return res.json({ ok: true });
 });
 
 
+app.post("/checkpoint/savepos", async (req, res) => {
+  const { token, x, y, z, world } = req.body;
+
+  const binding = await getBinding(token);
+  if (!binding) return res.json({ error: "invalid_token" });
+
+  const userId = await getUserIdByToken(token);
+  if (!userId) return res.json({ error: "invalid_tokenUser" });
+
+  await pool.query(
+    `INSERT INTO checkpoints (user_id,x,y,z,world,updated_at)
+     VALUES ($1,$2,$3,$4,$5,now())
+     ON CONFLICT (user_id)
+     DO UPDATE SET x=$2,y=$3,z=$4,world=$5,updated_at=now();`,
+    [userId, Math.floor(x), Math.floor(y), Math.floor(z), world]
+  );
+
+  res.json({ ok: true });
+});
 
 // ======================================================
 // ⭐ IR A MI CHECKPOINT (GRATIS)
