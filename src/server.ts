@@ -1285,8 +1285,8 @@ app.post("/checkpoint/go", async (req, res) => {
 
   await addTpTask(
     binding.mc_uuid,
-    "tp:checkpoint",
-    { x, y, z, world },
+  "tp:checkpoint",
+  JSON.stringify({ x, y, z, world }),
     "Teletransportando a tu checkpoint..."
   );
 
