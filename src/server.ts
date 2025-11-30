@@ -1251,65 +1251,98 @@ app.post("/teleport/go", async (req, res) => {
 // ⭐ GUARDAR CHECKPOINT (GRATIS)
 // ======================================================
 app.post("/checkpoint/save", async (req, res) => {
-  const { tokenUser, x, y, z, world } = req.body;
+  const { tokenUser, x, y, z, world } = req.body || {};
 
-  if (!tokenUser)
+  if (!tokenUser) {
     return res.json({ error: "unauthorized" });
+  }
 
   const binding = await getBinding(tokenUser);
-  if (!binding)
+  if (!binding) {
     return res.json({ error: "account_not_linked" });
+  }
 
   const userId = await getUserIdByToken(tokenUser);
-  if (!userId)
+  if (!userId) {
     return res.json({ error: "invalid_tokenUser" });
+  }
 
-  await pool.query(`
-    INSERT INTO checkpoints (user_id,x,y,z,world,updated_at)
-    VALUES ($1,$2,$3,$4,$5,now())
+  const xi = Number(x);
+  const yi = Number(y);
+  const zi = Number(z);
+
+  if (!Number.isFinite(xi) || !Number.isFinite(yi) || !Number.isFinite(zi)) {
+    return res.json({ error: "coords_invalid" });
+  }
+
+  const w = String(world || "world");
+
+  await pool.query(
+    `
+    INSERT INTO checkpoints (user_id, x, y, z, world, updated_at)
+    VALUES ($1,$2,$3,$4,$5, now())
     ON CONFLICT (user_id)
-    DO UPDATE SET x=$2,y=$3,z=$4,world=$5,updated_at=now();
-  `, [userId, x, y, z, world ?? "world"]);
+    DO UPDATE SET x=$2, y=$3, z=$4, world=$5, updated_at=now()
+  `,
+    [userId, xi, yi, zi, w]
+  );
 
-  return res.json({ ok: true });
+  return res.json({
+    ok: true,
+    x: xi,
+    y: yi,
+    z: zi,
+    world: w,
+  });
 });
+
 
 // ======================================================
 // ⭐ IR A MI CHECKPOINT (GRATIS)
 // ======================================================
 app.post("/checkpoint/go", async (req, res) => {
-  const { tokenUser } = req.body;
+  const { tokenUser } = req.body || {};
 
-  if (!tokenUser)
+  if (!tokenUser) {
     return res.json({ error: "unauthorized" });
+  }
 
   const binding = await getBinding(tokenUser);
-  if (!binding)
+  if (!binding) {
     return res.json({ error: "account_not_linked" });
+  }
 
   const userId = await getUserIdByToken(tokenUser);
-  if (!userId)
+  if (!userId) {
     return res.json({ error: "invalid_tokenUser" });
+  }
 
   const cp = await pool.query(
-    "SELECT x,y,z,world FROM checkpoints WHERE user_id=$1",
+    "SELECT x, y, z, world FROM checkpoints WHERE user_id=$1",
     [userId]
   );
 
-  if (!cp.rowCount)
+  if (!cp.rowCount) {
     return res.json({ error: "no_checkpoint_saved" });
+  }
 
-  const { x, y, z, world } = cp.rows[0];
+  const row = cp.rows[0];
+  const x = Number(row.x);
+  const y = Number(row.y);
+  const z = Number(row.z);
+  const world = String(row.world || "world");
 
+  // Enviamos OBJETO como payload (NO JSON.stringify aquí)
   await addTpTask(
     binding.mc_uuid,
-  "tp:checkpoint",
-  JSON.stringify({ x, y, z, world }),
+    "tp:checkpoint",
+    { x, y, z, world },
     "Teletransportando a tu checkpoint..."
   );
 
-  res.json({ ok: true });
+  return res.json({ ok: true });
 });
+
 
 // ======================================================
 // 🎯 TELETRANSPORTE PERSONALIZADO
