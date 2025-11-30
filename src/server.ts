@@ -1290,9 +1290,9 @@ app.post("/checkpoint/save", async (req, res) => {
 
 
 app.post("/checkpoint/savepos", async (req, res) => {
-  const { token, x, y, z, world } = req.body;
+  const { tokenUser, x, y, z, world } = req.body;
 
-  const userId = await getUserIdByToken(token);
+  const userId = await getUserIdByToken(tokenUser);
   if (!userId) return res.json({ error: "invalid_tokenUser" });
 
   await pool.query(
@@ -1305,6 +1305,7 @@ app.post("/checkpoint/savepos", async (req, res) => {
 
   res.json({ ok: true });
 });
+
 
 // ======================================================
 // ⭐ IR A MI CHECKPOINT (GRATIS)
