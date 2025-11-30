@@ -1328,9 +1328,7 @@ app.post("/teleport/custom", async (req, res) => {
 
   return res.json({ ok: true, balance: coins - cost });
 });
-
-
-
+  
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => console.log(`API lista en http://localhost:${PORT}`));
