@@ -501,6 +501,21 @@ app.post("/tasks/ack", async (req, res) => {
   res.json({ ok: true });
 });
 
+app.post("/tasks/create", async (req, res) => {
+  const { tokenUser, itemId, message } = req.body;
+
+  if (!tokenUser || !itemId)
+    return res.json({ error: "missing_fields" });
+
+  const binding = await getBinding(tokenUser);
+  if (!binding)
+    return res.json({ error: "account_not_linked" });
+
+  const id = crypto.randomUUID();
+  await addTask(id, binding.mc_uuid, itemId, 1, message);
+
+  res.json({ ok: true });
+});
 
 // REGISTER
 app.post("/auth/register", async (req, res) => {
