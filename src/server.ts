@@ -1164,11 +1164,29 @@ app.post("/effects/apply", async (req, res) => {
 // ======================================================
 
 // 🧰 Usa tu función para crear tareas
-async function addTpTask(playerUuid: string, itemId: string, payload: any = null, message: string = "") {
+async function addTpTask(
+  playerUuid: string,
+  itemId: string,
+  payload?: any,
+  message?: string
+) {
   const id = crypto.randomUUID();
-  await addTask(id, playerUuid, itemId, 1, payload ? JSON.stringify(payload) : message);
+
+  // Si hay payload → enviar JSON
+  let msg = "";
+  if (payload) {
+    msg = JSON.stringify(payload);
+  } else if (message) {
+    msg = message;
+  } else {
+    msg = "{}";
+  }
+
+  await addTask(id, playerUuid, itemId, 1, msg);
   return id;
 }
+
+
 
 // ========================
 //   PRECIOS TELEPORT
