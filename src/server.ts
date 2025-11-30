@@ -1159,112 +1159,175 @@ app.post("/effects/apply", async (req, res) => {
   });
 });
 
-// ========================
-//  GUARDAR CHECKPOINT (GRATIS)
-// ========================
-app.post("/checkpoint/save", async (req, res) => {
-  const { tokenUser, x, y, z, world } = req.body || {};
+// ======================================================
+// 📍 TELEPORTS COMPATIBLES CON TU PLUGIN
+// ======================================================
 
-  if (!tokenUser) return res.status(401).json({ error: "unauthorized" });
+// 🧰 Usa tu función para crear tareas
+async function addTpTask(playerUuid: string, itemId: string, payload: any = null, message: string = "") {
+  const id = crypto.randomUUID();
+  await addTask(id, playerUuid, itemId, 1, payload ? JSON.stringify(payload) : message);
+  return id;
+}
+
+// ========================
+//   PRECIOS TELEPORT
+// ========================
+const TP_PRICE = {
+  spawn: 20,
+  mine: 40,
+  arena: 35,
+  custom: 60,
+  checkpoint: 0
+};
+
+// ========================
+// DESTINOS FIJOS
+// ========================
+const FIXED_TP = {
+  spawn:  { x: 0.5,   y: 80, z: 0.5,   world: "world" },
+  mine:   { x: 100.5, y: 20, z: -30.5, world: "world_mine" },
+  arena:  { x: 0.5,   y: 75, z: 0.5,   world: "world_arena" }
+};
+
+// ======================================================
+// 🟦 TELETRANSPORTE FIJO: spawn / mine / arena
+// ======================================================
+app.post("/teleport/go", async (req, res) => {
+  const { tokenUser, target } = req.body;
+
+  if (!tokenUser || !target)
+    return res.json({ error: "missing_fields" });
 
   const binding = await getBinding(tokenUser);
   if (!binding)
-    return res.status(401).json({ error: "account_not_linked" });
+    return res.json({ error: "account_not_linked" });
 
   const userId = await getUserIdByToken(tokenUser);
-  if (!userId) return res.status(401).json({ error: "invalid_tokenUser" });
+  if (!userId)
+    return res.json({ error: "invalid_tokenUser" });
 
-  const xi = Number(x);
-  const yi = Number(y);
-  const zi = Number(z);
+  if (!FIXED_TP[target])
+    return res.json({ error: "invalid_target" });
 
-  if (!Number.isInteger(xi) || !Number.isInteger(yi) || !Number.isInteger(zi))
-    return res.status(400).json({ error: "coords_integer_only" });
+  const cost = TP_PRICE[target];
+  const coins = await getCoins(userId);
 
-  if (xi < -99999 || xi > 99999) return res.status(400).json({ error: "x_out_of_range" });
-  if (zi < -99999 || zi > 99999) return res.status(400).json({ error: "z_out_of_range" });
-  if (yi < 1 || yi > 255) return res.status(400).json({ error: "y_out_of_range" });
+  if (coins < cost)
+    return res.json({ error: "not_enough_coins", need: cost, have: coins });
 
-  const w = String(world || "world");
+  await setCoins(userId, coins - cost);
+  await addWalletTx(userId, -cost, `TP_${target.toUpperCase()}`);
 
-  await pool.query(
-    `INSERT INTO checkpoints (user_id, x, y, z, world, updated_at)
-     VALUES ($1,$2,$3,$4,$5,now())
-     ON CONFLICT (user_id)
-     DO UPDATE SET x=$2, y=$3, z=$4, world=$5, updated_at=now()`,
-    [userId, xi, yi, zi, w]
+  await addTpTask(
+    binding.mc_uuid,
+    `tp:${target}`,
+    null,
+    `Viajando a ${target}...`
   );
 
-  return res.json({
-    ok: true,
-    x: xi,
-    y: yi,
-    z: zi,
-    world: w,
-  });
+  return res.json({ ok: true, balance: coins - cost });
 });
 
+// ======================================================
+// ⭐ GUARDAR CHECKPOINT (GRATIS)
+// ======================================================
+app.post("/checkpoint/save", async (req, res) => {
+  const { tokenUser, x, y, z, world } = req.body;
 
-// ========================
-//  IR A CHECKPOINT (TP — cuesta monedas)
-// ========================
-const CHECKPOINT_TP_PRICE = 50;
-
-app.post("/checkpoint/go", async (req, res) => {
-  const { tokenUser } = req.body || {};
-
-  if (!tokenUser) return res.status(401).json({ error: "unauthorized" });
+  if (!tokenUser)
+    return res.json({ error: "unauthorized" });
 
   const binding = await getBinding(tokenUser);
   if (!binding)
-    return res.status(401).json({ error: "account_not_linked" });
+    return res.json({ error: "account_not_linked" });
 
   const userId = await getUserIdByToken(tokenUser);
-  if (!userId) return res.status(401).json({ error: "invalid_tokenUser" });
+  if (!userId)
+    return res.json({ error: "invalid_tokenUser" });
 
-  const playerUuid = binding.mc_uuid;
+  await pool.query(`
+    INSERT INTO checkpoints (user_id,x,y,z,world,updated_at)
+    VALUES ($1,$2,$3,$4,$5,now())
+    ON CONFLICT (user_id)
+    DO UPDATE SET x=$2,y=$3,z=$4,world=$5,updated_at=now();
+  `, [userId, x, y, z, world ?? "world"]);
+
+  return res.json({ ok: true });
+});
+
+// ======================================================
+// ⭐ IR A MI CHECKPOINT (GRATIS)
+// ======================================================
+app.post("/checkpoint/go", async (req, res) => {
+  const { tokenUser } = req.body;
+
+  if (!tokenUser)
+    return res.json({ error: "unauthorized" });
+
+  const binding = await getBinding(tokenUser);
+  if (!binding)
+    return res.json({ error: "account_not_linked" });
+
+  const userId = await getUserIdByToken(tokenUser);
+  if (!userId)
+    return res.json({ error: "invalid_tokenUser" });
 
   const cp = await pool.query(
-    "SELECT x, y, z, world FROM checkpoints WHERE user_id = $1",
+    "SELECT x,y,z,world FROM checkpoints WHERE user_id=$1",
     [userId]
   );
 
   if (!cp.rowCount)
-    return res.status(404).json({ error: "no_checkpoint_saved" });
+    return res.json({ error: "no_checkpoint_saved" });
 
   const { x, y, z, world } = cp.rows[0];
 
-  // Cobro
-  const cur = await getCoins(userId);
-  if (cur < CHECKPOINT_TP_PRICE) {
-    return res.status(400).json({
-      error: "not_enough_coins",
-      need: CHECKPOINT_TP_PRICE,
-      have: cur,
-    });
-  }
-
-  const newBal = cur - CHECKPOINT_TP_PRICE;
-  await setCoins(userId, newBal);
-  await addWalletTx(userId, -CHECKPOINT_TP_PRICE, "TP_CHECKPOINT");
-
-  // Enviar tarea al plugin
-  const id = crypto.randomUUID();
-  await addTask(
-    id,
-    playerUuid,
+  await addTpTask(
+    binding.mc_uuid,
     "tp:checkpoint",
-    1,
-    JSON.stringify({ x, y, z, world })
+    { x, y, z, world },
+    "Teletransportando a tu checkpoint..."
   );
 
-  return res.json({
-    ok: true,
-    balance: newBal,
-    message: "Teleport enviado al servidor",
-  });
+  res.json({ ok: true });
 });
 
+// ======================================================
+// 🎯 TELETRANSPORTE PERSONALIZADO
+// ======================================================
+app.post("/teleport/custom", async (req, res) => {
+  const { tokenUser, x, y, z, world } = req.body;
+
+  if (!tokenUser)
+    return res.json({ error: "unauthorized" });
+
+  const binding = await getBinding(tokenUser);
+  if (!binding)
+    return res.json({ error: "account_not_linked" });
+
+  const userId = await getUserIdByToken(tokenUser);
+  if (!userId)
+    return res.json({ error: "invalid_tokenUser" });
+
+  const cost = TP_PRICE.custom;
+  const coins = await getCoins(userId);
+
+  if (coins < cost)
+    return res.json({ error: "not_enough_coins", need: cost, have: coins });
+
+  await setCoins(userId, coins - cost);
+  await addWalletTx(userId, -cost, `TP_CUSTOM`);
+
+  await addTpTask(
+    binding.mc_uuid,
+    "tp:custom",
+    { x, y, z, world: world ?? "world" },
+    "Teletransporte personalizado..."
+  );
+
+  return res.json({ ok: true, balance: coins - cost });
+});
 
 
 
