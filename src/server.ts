@@ -517,6 +517,8 @@ app.post("/tasks/create", async (req, res) => {
   res.json({ ok: true });
 });
 
+
+
 // REGISTER
 app.post("/auth/register", async (req, res) => {
   const { username, password } = req.body || {};
@@ -1290,9 +1292,6 @@ app.post("/checkpoint/save", async (req, res) => {
 app.post("/checkpoint/savepos", async (req, res) => {
   const { token, x, y, z, world } = req.body;
 
-  const binding = await getBinding(token);
-  if (!binding) return res.json({ error: "invalid_token" });
-
   const userId = await getUserIdByToken(token);
   if (!userId) return res.json({ error: "invalid_tokenUser" });
 
@@ -1351,24 +1350,6 @@ app.post("/checkpoint/go", async (req, res) => {
   );
 
   return res.json({ ok: true });
-});
-
-app.post("/checkpoint/savepos", async (req, res) => {
-  const { tokenUser, x, y, z, world } = req.body;
-
-  const userId = await getUserIdByToken(tokenUser);
-  if (!userId)
-    return res.json({ error: "invalid_token" });
-
-  await pool.query(
-    `INSERT INTO checkpoints (user_id,x,y,z,world,updated_at)
-     VALUES ($1,$2,$3,$4,$5,now())
-     ON CONFLICT (user_id)
-     DO UPDATE SET x=$2,y=$3,z=$4,world=$5,updated_at=now()`,
-    [userId, Math.floor(x), Math.floor(y), Math.floor(z), world]
-  );
-
-  res.json({ ok: true });
 });
 
 
