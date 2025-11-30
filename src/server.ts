@@ -1253,24 +1253,22 @@ app.post("/teleport/go", async (req, res) => {
 app.post("/checkpoint/save", async (req, res) => {
   const { tokenUser, x, y, z, world } = req.body || {};
 
-  if (!tokenUser) {
+  if (!tokenUser)
     return res.json({ error: "unauthorized" });
-  }
 
   const binding = await getBinding(tokenUser);
-  if (!binding) {
+  if (!binding)
     return res.json({ error: "account_not_linked" });
-  }
 
   const userId = await getUserIdByToken(tokenUser);
-  if (!userId) {
+  if (!userId)
     return res.json({ error: "invalid_tokenUser" });
-  }
 
   const xi = Number(x);
   const yi = Number(y);
   const zi = Number(z);
 
+  // 🚨 SI ES NaN → ERROR
   if (!Number.isFinite(xi) || !Number.isFinite(yi) || !Number.isFinite(zi)) {
     return res.json({ error: "coords_invalid" });
   }
@@ -1283,18 +1281,16 @@ app.post("/checkpoint/save", async (req, res) => {
     VALUES ($1,$2,$3,$4,$5, now())
     ON CONFLICT (user_id)
     DO UPDATE SET x=$2, y=$3, z=$4, world=$5, updated_at=now()
-  `,
+    `,
     [userId, xi, yi, zi, w]
   );
 
   return res.json({
     ok: true,
-    x: xi,
-    y: yi,
-    z: zi,
-    world: w,
+    x: xi, y: yi, z: zi, world: w
   });
 });
+
 
 
 // ======================================================
