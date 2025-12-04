@@ -409,7 +409,7 @@ app.post("/purchase", async (req, res) => {
 });
 
 // === DESVINCULAR CUENTA ===
-app.delete("/link/unlink", async (req, res) => {
+app.post("/link/unlink", async (req, res) => {
   try {
     const { tokenUser } = req.body || {};
     if (!tokenUser) return res.json({ error: "Falta tokenUser" });
