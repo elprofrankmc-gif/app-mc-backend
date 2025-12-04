@@ -408,6 +408,50 @@ app.post("/purchase", async (req, res) => {
   return res.json({ ok: true, orderId: ins.rows[0].id, balance: newBal });
 });
 
+// === DESVINCULAR CUENTA ===
+app.delete("/link/unlink", async (req, res) => {
+  try {
+    const { tokenUser } = req.body || {};
+    if (!tokenUser) return res.json({ error: "Falta tokenUser" });
+
+    // Buscar binding en BD
+    const r = await pool.query(
+      "SELECT mc_uuid FROM player_bindings WHERE token_user=$1",
+      [tokenUser]
+    );
+
+    if (!r.rowCount) {
+      return res.json({ error: "No tienes ninguna vinculación activa" });
+    }
+
+    const mc_uuid = r.rows[0].mc_uuid;
+
+    // Borrar binding
+    await pool.query(
+      "DELETE FROM player_bindings WHERE token_user=$1",
+      [tokenUser]
+    );
+
+    // ✔ Crear tarea compatible con TU plugin
+    // Tu plugin espera:
+    // - player_uuid
+    // - item_id = 'unlink_message'
+    // - amount = 0
+    // - message = JSON con texto
+    await pool.query(
+      `INSERT INTO pending_tasks (player_uuid, item_id, amount, message)
+       VALUES ($1, 'unlink_message', 0, '{"text":"Tu cuenta ha sido desvinculada."}')`,
+      [mc_uuid]
+    );
+
+    return res.json({ success: true });
+  } catch (err) {
+    console.error(err);
+    return res.json({ error: "Error en el servidor al desvincular" });
+  }
+});
+
+
 
 //CLIMA MAS TIEMPO
 app.post("/world/change", async (req, res) => {
